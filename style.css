@@ -1,0 +1,68 @@
+:root{--navy:#012B77;--ok:#17633A;--mal:#B42318;--wa:#8A5A00;--inf:#1F3A68;--bg:#F4F6F8;--txt:#111827;--txt2:#6B7280;--bd:#E5E7EB}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:Roboto,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+button{font:inherit;cursor:pointer;color:inherit}
+#app{min-height:100%;display:flex;flex-direction:column}
+.cab{background:var(--navy);color:#fff;padding:calc(12px + env(safe-area-inset-top)) 16px 14px;flex:none}
+.cab small{opacity:.75;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.cab b{display:block;font-size:18px;margin-top:2px}
+.cab .lin{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.cab .lin span{background:rgba(255,255,255,.16);border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600}
+.cuerpo{flex:1;overflow:auto;padding:14px;max-width:640px;width:100%;margin:0 auto}
+.card{background:#fff;border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.card h4{margin:0 0 8px;font-size:14px;color:var(--navy)}
+.sub{font-size:13px;color:var(--txt2)}
+.big{width:100%;border:0;border-radius:14px;padding:15px;font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px}
+.big.pri{background:var(--navy);color:#fff}.big.sc{background:#E7EBF4;color:var(--navy)}.big.ok{background:var(--ok);color:#fff}
+.big.lin{background:#fff;color:#374151;border:1.5px solid #D1D5DB}.big.mal{background:var(--mal);color:#fff}
+.big:disabled{opacity:.4}
+.fila{display:flex;gap:8px}.fila>*{flex:1}
+.prog{height:10px;border-radius:99px;background:var(--bd);overflow:hidden;margin:6px 0 4px}.prog i{display:block;height:100%;background:var(--ok);border-radius:99px}
+.cont3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+.cont3 div{background:var(--bg);border-radius:12px;padding:8px;text-align:center}.cont3 b{display:block;font-size:20px}.cont3 span{font-size:11px;color:var(--txt2)}
+.envio{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--txt2);margin-top:8px}
+.punto{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--ok)}
+.lista div{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid #F1F2F4;font-size:13px}
+.lista div:last-child{border-bottom:0}
+.lista .r{color:var(--mal);text-align:right}.lista .a{color:var(--wa);text-align:right}
+.mono{font-family:ui-monospace,Consolas,monospace}
+.desp{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F1F2F4}
+.desp:last-child{border-bottom:0}.desp .t{flex:1}.desp b{display:block}.desp small{color:var(--txt2)}
+.desp button{border:1px solid #D1D5DB;background:#fff;border-radius:10px;padding:8px 12px;font-weight:600;font-size:13px}
+.vacio{text-align:center;color:var(--txt2);padding:20px 8px;font-size:14px;line-height:1.5}
+/* ---------- camara ---------- */
+.cam{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;z-index:10}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cam .marco{position:absolute;left:8%;right:8%;top:22%;height:38%;border:3px solid rgba(255,255,255,.9);border-radius:18px;box-shadow:0 0 0 2000px rgba(0,0,0,.35);pointer-events:none}
+.cam .marco.ok{border-color:#4ADE80}
+.cam .arriba{position:relative;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;background:linear-gradient(rgba(0,0,0,.7),rgba(0,0,0,0));color:#fff}
+.cam .arriba small{opacity:.8;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.cam .arriba b{display:block;font-size:16px}
+.cam .tip{position:relative;margin:6px auto 0;background:rgba(0,0,0,.55);color:#fff;border-radius:999px;padding:6px 14px;font-size:14px;font-weight:600;max-width:92%;text-align:center}
+.cam .tip.wa{background:rgba(138,90,0,.92)}
+.cam .abajo{position:absolute;left:0;right:0;bottom:0;padding:12px 14px calc(14px + env(safe-area-inset-bottom));display:grid;gap:10px}
+.cam .esperada{background:rgba(255,255,255,.96);border-radius:14px;padding:10px 12px;font-size:13px;color:#374151}
+.cam .esperada b{font-size:22px;color:#111827;display:block}
+.cam .botones{display:flex;gap:8px}
+.cam .botones button{flex:1;border:0;border-radius:14px;padding:14px;font-size:15px;font-weight:700;background:rgba(255,255,255,.92);color:#111827}
+.cam .botones button.icono{flex:none;width:56px}
+/* ---------- resultado ---------- */
+#res{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;color:#fff}
+#res.ok{background:var(--ok)}#res.mal{background:var(--mal)}#res.wa{background:var(--wa)}#res.inf{background:var(--inf)}
+#res .ic{width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.18);display:grid;place-items:center;font-size:46px;font-weight:900;margin-bottom:16px}
+#res h2{margin:0 0 8px;font-size:27px;line-height:1.15}
+#res p{margin:0 0 6px;font-size:16px;opacity:.95}
+#res .num{font-family:ui-monospace,Consolas,monospace;font-size:22px;font-weight:700;background:rgba(255,255,255,.14);border-radius:10px;padding:6px 12px;margin:8px 0;line-height:1.4}
+#res .bot{width:100%;max-width:420px;margin-top:24px;display:grid;gap:10px}
+#res .bot button{border:0;border-radius:14px;padding:16px;font-size:17px;font-weight:700}
+#res .bot .b1{background:#fff;color:#111827}#res .bot .b2{background:rgba(255,255,255,.16);color:#fff}
+/* ---------- dialogo y aviso ---------- */
+dialog{border:0;border-radius:18px;padding:0;width:min(92vw,420px)}
+dialog::backdrop{background:rgba(15,23,42,.5)}
+dialog form{padding:18px}
+dialog h3{margin:0 0 12px;font-size:18px;color:var(--navy)}
+dialog label{display:block;font-size:12px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.05em;margin:10px 0 4px}
+dialog input[type=text],dialog input[type=tel],dialog textarea{width:100%;font:inherit;font-size:17px;border:1.5px solid #D1D5DB;border-radius:12px;padding:12px}
+dialog .chk{display:flex;gap:10px;align-items:center;margin-top:12px;font-size:15px}
+dialog .chk input{width:20px;height:20px}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#111827;color:#fff;border-radius:12px;padding:10px 16px;font-size:14px;z-index:40;max-width:90vw;text-align:center}
