@@ -1,5 +1,5 @@
 // Guarda la app completa en el teléfono para que funcione sin señal.
-const CACHE = "control-insercion-v1.0.0";
+const CACHE = "control-insercion-v1.0.1";
 const ARCHIVOS = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png",
   "vendor/zxing/zxing-reader.js", "vendor/zxing/zxing_reader.wasm",
@@ -13,5 +13,14 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(r => r || fetch(e.request)));
+  const url = new URL(e.request.url);
+  if (url.pathname.includes("/vendor/")) {          // librerias pesadas: desde la cache
+    e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(r => r || fetch(e.request)));
+    return;
+  }
+  // la app (html, js, css): primero la red para tomar las actualizaciones; sin señal, la cache
+  e.respondWith(fetch(e.request).then(r => {
+    if (r.ok && url.origin === location.origin) { const c = r.clone(); caches.open(CACHE).then(k => k.put(e.request, c)); }
+    return r;
+  }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match("index.html"))));
 });

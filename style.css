@@ -1,5 +1,6 @@
 :root{--navy:#012B77;--ok:#17633A;--mal:#B42318;--wa:#8A5A00;--inf:#1F3A68;--bg:#F4F6F8;--txt:#111827;--txt2:#6B7280;--bd:#E5E7EB}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:Roboto,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
 button{font:inherit;cursor:pointer;color:inherit}
 #app{min-height:100%;display:flex;flex-direction:column}

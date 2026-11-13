@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.0.0";
+const VERSION = "1.0.1";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -414,13 +414,14 @@ async function importarEnlace(texto) {
   toast(`Despacho ${d.despacho} cargado · ${n0(d.muestras.length)} muestras`, 3500);
 }
 async function pegarEnlace() {
-  let t = "";
-  try { t = await navigator.clipboard.readText(); } catch { /* */ }
-  if (!/#g=/.test(t)) {
-    const fd = await dialogo(`<h3>Pegar enlace del despacho</h3><textarea name="t" rows="4" required></textarea>
-      <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Cargar</button></div>`);
-    t = fd ? String(fd.get("t") || "") : "";
-  }
+  const abierto = dialogo(`<h3>Pegar enlace del despacho</h3><textarea name="t" id="txtEnlace" rows="5" required placeholder="Mantén presionado aquí y elige Pegar"></textarea>
+    <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Cargar</button></div>`);
+  try {   // si el navegador deja leer el portapapeles, se rellena solo
+    const t = await Promise.race([navigator.clipboard?.readText?.() ?? Promise.resolve(""), new Promise(r => setTimeout(() => r(""), 1200))]);
+    const a = $("#txtEnlace"); if (a && !a.value && /#g=/.test(t || "")) a.value = t;
+  } catch { /* sin permiso: se pega a mano */ }
+  const fd = await abierto;
+  const t = fd ? String(fd.get("t") || "") : "";
   if (t) try { await importarEnlace(t); } catch (e) { toast(e.message, 4500); }
 }
 
