@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.2.1";
+const VERSION = "1.3.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -70,10 +70,18 @@ async function abrirCifrado(bytes, tipo) {
   try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }   // la clave fija de la v1.1 ya no se usa
   let error = "";
   for (;;) {
-    const fd = await dialogo(`<h3>Clave del enlace</h3>${error ? `<div class="sub" style="color:#B42318">${esc(error)}</div>` : ""}
-      <label>La clave que acompaña a este enlace (p. ej. K7M4-QX9P)</label>
-      <input name="c" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase;letter-spacing:.12em;font-family:monospace;font-size:20px">
-      <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Abrir</button></div>`);
+    const abierto = dialogo(`<div class="clave-h"><span>🔒</span><h3>Clave del despacho</h3>
+        <div class="sub">Está junto al QR en la plataforma. Escribe solo letras y números: el guion se pone solo.</div></div>
+      ${error ? `<div class="clave-err">${esc(error)}</div>` : ""}
+      <input name="c" id="clv" class="clave-in" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false"
+             maxlength="9" placeholder="XXXX-XXXX" pattern="[A-Za-z0-9]{4}-[A-Za-z0-9]{4}" title="8 letras o números">
+      <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Abrir despacho</button></div>`);
+    const inp = $("#clv");
+    if (inp) inp.oninput = () => {   // mayusculas, sin simbolos y guion automatico tras 4 caracteres
+      const v = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+      inp.value = v.length > 4 ? `${v.slice(0, 4)}-${v.slice(4)}` : v;
+    };
+    const fd = await abierto;
     if (!fd) throw new Error("Se necesita la clave del enlace para abrirlo");
     try { return await descifrar(bytes, tipo, String(fd.get("c") || "")); }
     catch (e) { if (/versión/.test(e.message)) throw e; error = "Clave incorrecta"; }
@@ -292,7 +300,7 @@ function pQr() {
 function cerrarCamara() {
   if (S.scan) S.scan.on = false;
   S.stream?.getTracks().forEach(t => t.stop()); S.stream = null;
-  S.pant = "inicio"; render();
+  S.pant = "desp"; render();
 }
 async function linterna() {
   const t = S.stream?.getVideoTracks()[0]; if (!t) return;
@@ -477,7 +485,7 @@ async function importarEnlace(texto) {
   }
   await idb.put("despachos", d);
   await cargarDespacho(d.despacho);
-  S.pant = "inicio"; render();
+  S.pant = "desp"; render();
   toast(`Despacho ${d.despacho} cargado · ${n0(d.muestras.length)} muestras`, 3500);
 }
 async function pegarEnlace() {
@@ -493,57 +501,149 @@ async function pegarEnlace() {
 }
 
 /* ------------------------------------------------------------------ pantallas */
-function cab(titulo) {
-  if (!S.desp) return `<div class="cab"><small>QAQC · Drillholes</small><b>${esc(titulo)}</b></div>`;
-  const r = resumen();
-  return `<div class="cab"><small>Despacho ${esc(S.desp.despacho)} · ${esc(S.desp.sondaje || "")}</small><b>${esc(titulo)}</b>
-    <div class="lin"><span>E1 ${n0(r.e1)}/${n0(r.n1)}</span><span>E2 ${n0(r.e2)}/${n0(r.n)}</span><span>${n0(r.alertas.length)} alertas</span></div></div>`;
+const IC = {
+  qr: '<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3z"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 17h4v4h-4"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  home: '<path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/>',
+  avance: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/>',
+  lista: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  cierre: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  cam: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+  buscar: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  der: '<path d="m9 18 6-6-6-6"/>', atras: '<path d="m15 18-6-6 6-6"/>',
+  alerta: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  ok: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', reloj: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  subir: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
+};
+const ico = (k, s = 20) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24">${IC[k]}</svg>`;
+const pct = (a, b) => (b ? Math.round(100 * a / b) : 0);
+function anillo(p, color, txt) {
+  const r = 26, c = 2 * Math.PI * r;
+  return `<svg class="anillo" viewBox="0 0 64 64"><circle cx="32" cy="32" r="${r}" class="fondo"/>
+    <circle cx="32" cy="32" r="${r}" stroke="${color}" stroke-dasharray="${(c * p / 100).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 32 32)"/>
+    <text x="32" y="36" text-anchor="middle">${txt ?? p + "%"}</text></svg>`;
 }
-async function pInicio() {
+const cuando = ts => {
+  if (!ts) return "";
+  const d = new Date(ts), h = new Date();
+  return d.toDateString() === h.toDateString() ? `hoy ${hora(ts)}` : d.toLocaleDateString("es-PE", { day: "2-digit", month: "short" }) + " " + hora(ts);
+};
+
+function cabInicio() {
+  return `<div class="hero"><div class="hero-t"><span class="logo">${ico("qr", 22)}</span><div><small>QAQC · Drillholes</small><b>Control de Inserción</b></div></div>
+    <button class="chip-user" data-a="usuario">${ico("user", 16)}${S.usuario ? esc(S.usuario) : "¿Quién valida?"}</button></div>`;
+}
+function cabDesp(titulo) {
+  const r = resumen();
+  return `<div class="cab"><div class="cab-f"><button class="atras" data-a="home" aria-label="Despachos">${ico("atras", 22)}</button>
+    <div><small>${esc(S.desp.sondaje || "")} · ${n0(r.n)} muestras</small><b>${esc(titulo)}</b></div></div></div>`;
+}
+function nav(activa) {
+  const it = (k, i, t) => `<button class="${activa === k ? "on" : ""}" data-a="${k}">${ico(i, 22)}<span>${t}</span></button>`;
+  return `<nav class="nav">${it("home", "home", "Despachos")}${it("desp", "avance", "Avance")}${it("muestras", "lista", "Muestras")}${it("resumen", "cierre", "Cierre")}</nav>`;
+}
+
+async function resumenDe(d) {
+  const L = d.despacho === S.desp?.despacho ? S.lect : await idb.porDespacho(d.despacho);
+  const ult = (e, n) => { let u = null; for (const l of L) if (l.etapa === e && l.muestra === n && (!u || l.ts > u.ts)) u = l; return u; };
+  const prep = d.muestras.filter(m => !m.ctrl);
+  const e1 = prep.filter(m => ult(1, m.n)?.resultado === "conforme").length, e2 = d.muestras.filter(m => ult(2, m.n)?.resultado === "conforme").length;
+  return { n: d.muestras.length, n1: prep.length, e1, e2, alertas: L.filter(l => l.resultado === "alerta").length,
+           sinExp: L.filter(l => !l.exportado).length, ultima: L.reduce((a, l) => (l.ts > a ? l.ts : a), "") };
+}
+
+async function pHome() {
   const lista = (await idb.all("despachos")).sort((a, b) => b.cargado.localeCompare(a.cargado));
-  if (!S.desp) {
-    return cab("Control de Inserción") + `<div class="cuerpo">
-      <div class="card"><div class="vacio">Escanea el <b>QR del despacho</b> que muestra la plataforma, abre su enlace en este teléfono o pégalo aquí.</div>
-        <button class="big pri" data-a="qr">Escanear QR del despacho</button>
-        <button class="big lin" data-a="pegar">Pegar enlace del despacho</button></div>
-      ${lista.length ? `<div class="card"><h4>Despachos en el teléfono</h4>${lista.map(d => `<div class="desp"><div class="t"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(d.muestras.length)} muestras</small></div><button data-a="abrir" data-d="${esc(d.despacho)}">Abrir</button></div>`).join("")}</div>` : ""}
-      ${pie()}</div>`;
-  }
-  const r = resumen();
-  const p1 = r.n1 ? Math.round(100 * r.e1 / r.n1) : 0, p2 = r.n ? Math.round(100 * r.e2 / r.n) : 0;
+  const filas = await Promise.all(lista.map(async d => ({ d, r: await resumenDe(d) })));
+  const tarjeta = ({ d, r }) => {
+    const p = pct(r.e1 + r.e2, r.n1 + r.n), fin = r.e1 >= r.n1 && r.e2 >= r.n;
+    return `<button class="dcard" data-a="abrir" data-d="${esc(d.despacho)}">
+      ${anillo(p, fin ? "#17633A" : "#012B77")}
+      <div class="dt"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(r.n)} muestras</small>
+        <div class="tags"><span>E1 ${n0(r.e1)}/${n0(r.n1)}</span><span>E2 ${n0(r.e2)}/${n0(r.n)}</span>
+          ${r.alertas ? `<span class="t-mal">${n0(r.alertas)} alerta${r.alertas === 1 ? "" : "s"}</span>` : ""}${r.sinExp ? `<span class="t-wa">${n0(r.sinExp)} sin exportar</span>` : ""}
+          ${fin && !r.sinExp ? `<span class="t-ok">Completo</span>` : ""}</div>
+        <em>${r.ultima ? "Última lectura " + cuando(r.ultima) : "Cargado " + cuando(d.cargado)}</em></div>${ico("der")}</button>`;
+  };
+  return cabInicio() + `<div class="cuerpo">
+    <div class="acciones">
+      <button class="accion pri" data-a="qr">${ico("qr", 30)}<b>Escanear QR</b><span>del despacho en la plataforma</span></button>
+      <button class="accion" data-a="pegar">${ico("link", 28)}<b>Pegar enlace</b><span>si te lo enviaron por mensaje</span></button></div>
+    <div class="sec">Despachos en el teléfono <span>${n0(lista.length)}</span></div>
+    ${filas.length ? filas.map(tarjeta).join("") : `<div class="card vacio">${ico("qr", 40)}<p>Todavía no hay despachos.<br>Escanea el QR que muestra la plataforma en <b>Control de Inserción</b> para empezar.</p></div>`}
+    <div class="pie">Los datos quedan solo en este teléfono hasta que exportes el CSV · v${VERSION}</div></div>`;
+}
+
+function pDesp() {
+  const r = resumen(), p1 = pct(r.e1, r.n1), p2 = pct(r.e2, r.n);
   const al1 = r.alertas.filter(l => l.etapa === 1).length, al2 = r.alertas.filter(l => l.etapa === 2).length;
-  const c = {}; S.desp.muestras.forEach(m => { c[m.tipo] = (c[m.tipo] || 0) + 1; });
-  return cab("Control de Inserción") + `<div class="cuerpo">
-    <div class="card"><h4>Guía cargada</h4><div class="sub">${n0(r.n)} muestras · ${n0(r.n1)} preparadas · ${n0(r.n - r.n1)} controles</div></div>
-    <div class="card"><h4>Etapa 1 · GEO = LAB</h4><div class="prog"><i style="width:${p1}%"></i></div>
-      <div class="sub">${n0(r.e1)} de ${n0(r.n1)} muestras preparadas · ${al1} alertas</div>
-      <button class="big pri" data-a="e1">${r.e1 ? "Continuar" : "Iniciar"} etapa 1</button></div>
-    <div class="card"><h4>Etapa 2 · Barrido (bolsita y sobre)</h4><div class="prog"><i style="width:${p2}%"></i></div>
-      <div class="sub">${n0(r.e2)} de ${n0(r.n)} · ${al2} alertas</div>
-      <button class="big ${r.e1 ? "pri" : "lin"}" data-a="e2">${r.e2 ? "Continuar" : "Iniciar"} barrido</button></div>
-    <div class="card"><h4>Cierre</h4><button class="big sc" data-a="resumen">Ver resumen y exportar</button>
-      <div class="envio"><span class="punto" style="background:${r.sinExp ? "#8A5A00" : "#17633A"}"></span>${r.sinExp ? `${n0(r.sinExp)} lecturas sin exportar` : (S.lect.length ? "Todo exportado" : "Sin lecturas")} · guardado en el teléfono</div></div>
-    <div class="card"><h4>Otros despachos</h4>${lista.filter(d => d.despacho !== S.desp.despacho).map(d => `<div class="desp"><div class="t"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(d.muestras.length)} muestras</small></div><button data-a="abrir" data-d="${esc(d.despacho)}">Abrir</button></div>`).join("") || '<div class="sub">Ninguno</div>'}
-      <button class="big lin" data-a="qr">Escanear QR de otro despacho</button><button class="big lin" data-a="pegar">Pegar enlace de otro despacho</button></div>
-    ${pie()}</div>`;
+  const s1 = siguienteE1(), s2 = siguienteE2();
+  const tipos = {}; S.desp.muestras.forEach(m => { tipos[m.tipo] = (tipos[m.tipo] || 0) + 1; });
+  const act = [...S.lect].sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, 6);
+  const etapa = (e, tit, sub, p, al, sig, hecho, total, cls) => `<div class="card etapa">
+      <div class="et-h">${anillo(p, p === 100 ? "#17633A" : "#012B77")}<div><h4>${tit}</h4><div class="sub">${sub}</div>
+        <div class="tags"><span>${n0(hecho)} de ${n0(total)}</span>${al ? `<span class="t-mal">${al} alerta${al === 1 ? "" : "s"}</span>` : ""}</div></div></div>
+      ${sig ? `<div class="sig">Siguiente <b class="mono">${esc(sig.n)}</b><span>${esc(sig.tipo)} · ${tramo(sig)}</span></div>` : `<div class="sig ok">${ico("ok", 16)} Etapa completa</div>`}
+      <button class="big ${cls}" data-a="e${e}">${ico("cam", 20)}${hecho ? "Continuar" : "Iniciar"} ${e === 1 ? "etapa 1" : "barrido"}</button></div>`;
+  return cabDesp(S.desp.despacho) + `<div class="cuerpo con-nav">
+    <div class="tipos">${Object.entries(tipos).map(([t, n]) => `<span class="${esControl(t) ? "ctl" : ""}">${esc(t)} · <b>${n0(n)}</b></span>`).join("")}</div>
+    ${etapa(1, "Etapa 1 · GEO = LAB", "Muestras preparadas: la GEO y la LAB juntas", p1, al1, s1, r.e1, r.n1, "pri")}
+    ${etapa(2, "Etapa 2 · Barrido", "La LAB de la bolsita y la del sobre, en el orden de la guía", p2, al2, s2, r.e2, r.n, r.e1 ? "pri" : "lin")}
+    <div class="card"><h4>Actividad reciente</h4>${act.length ? `<div class="act">${act.map(l => `<div><span class="pt ${l.resultado === "alerta" ? "mal" : l.metodo === "manual" ? "wa" : "ok"}"></span>
+      <span class="mono">${esc(l.muestra)}</span><span class="sub">E${l.etapa} · ${esc(l.resultado === "alerta" ? ALERTA_TXT[l.alerta] || l.alerta : l.metodo === "manual" ? "Manual" : "Conforme")}</span><em>${cuando(l.ts)}</em></div>`).join("")}</div>`
+      : '<div class="sub">Sin lecturas todavía</div>'}</div>
+  </div>` + nav("desp");
 }
-function pie() {
-  return `<div class="sub" style="text-align:center;margin:6px 0 20px">${S.usuario ? `Valida: <b>${esc(S.usuario)}</b> · ` : ""}<a href="#" data-a="usuario">${S.usuario ? "cambiar" : "indica tu nombre"}</a> · v${VERSION}</div>`;
+
+const FILTROS = [["todas", "Todas"], ["p1", "Pendientes E1"], ["p2", "Pendientes E2"], ["alertas", "Alertas"], ["ctl", "Controles"]];
+function estadoMuestra(m) {
+  const u1 = m.ctrl ? null : ultima(1, m.n), u2 = ultima(2, m.n);
+  const st = u => !u ? "pend" : u.resultado === "conforme" ? (u.metodo === "manual" ? "man" : "ok") : "mal";
+  return { e1: m.ctrl ? "na" : st(u1), e2: st(u2) };
 }
+function pMuestras() {
+  const q = (S.q || "").trim(), f = S.filtro || "todas";
+  const M = S.desp.muestras.filter(m => {
+    if (q && !m.n.includes(q)) return false;
+    const e = estadoMuestra(m);
+    return f === "todas" || (f === "p1" && !m.ctrl && e.e1 !== "ok" && e.e1 !== "man") || (f === "p2" && e.e2 !== "ok" && e.e2 !== "man")
+      || (f === "alertas" && (e.e1 === "mal" || e.e2 === "mal")) || (f === "ctl" && m.ctrl);
+  });
+  const cel = s => `<i class="st ${s}">${s === "ok" ? ico("ok", 13) : s === "man" ? "M" : s === "mal" ? ico("x", 13) : s === "na" ? "–" : ""}</i>`;
+  return cabDesp("Muestras") + `<div class="cuerpo con-nav">
+    <div class="buscador">${ico("buscar", 18)}<input id="qm" type="search" inputmode="numeric" placeholder="Buscar número de muestra" value="${esc(q)}"></div>
+    <div class="filtros">${FILTROS.map(([k, t]) => `<button class="${f === k ? "on" : ""}" data-a="filtro" data-f="${k}">${t}</button>`).join("")}</div>
+    <div class="card lm"><div class="lm-h"><span>Muestra</span><span>E1</span><span>E2</span></div>
+      ${M.slice(0, 400).map(m => { const e = estadoMuestra(m); return `<button class="lm-f" data-a="muestra" data-n="${esc(m.n)}">
+        <div><b class="mono">${esc(m.n)}</b><small><span class="tp ${m.ctrl ? "ctl" : ""}">${esc(m.tipo)}</span> ${tramo(m)}${m.dup ? ` · dup. de ${esc(m.dup)}` : ""}</small></div>${cel(e.e1)}${cel(e.e2)}</button>`; }).join("")
+      || '<div class="vacio">Ninguna muestra con ese filtro</div>'}
+      ${M.length > 400 ? `<div class="sub" style="padding:8px">… ${n0(M.length - 400)} más: usa el buscador</div>` : ""}</div>
+    <div class="ley">${cel("ok")} conforme ${cel("man")} manual ${cel("mal")} alerta ${cel("pend")} pendiente</div>
+  </div>` + nav("muestras");
+}
+async function verMuestra(n) {
+  const m = S.idx.get(n); if (!m) return;
+  const L = S.lect.filter(l => l.muestra === n).sort((a, b) => b.ts.localeCompare(a.ts));
+  await dialogo(`<h3 class="mono">${esc(n)}</h3><div class="sub">${esc(m.tipo)} · ${tramo(m)} · orden ${m.o} en la guía${m.dup ? ` · duplicado de ${esc(m.dup)}` : ""}</div>
+    <div class="hist">${L.length ? L.map(l => `<div><b>E${l.etapa}</b><span class="${l.resultado === "alerta" ? "r" : ""}">${esc(l.resultado === "alerta" ? ALERTA_TXT[l.alerta] || l.alerta : "Conforme")}${l.metodo === "manual" ? " · manual" : ""}</span>
+      <em>${cuando(l.ts)}${l.usuario ? " · " + esc(l.usuario) : ""}</em>${l.detalle ? `<small>${esc(l.detalle)}</small>` : ""}</div>`).join("") : '<div class="sub">Sin lecturas</div>'}</div>
+    <div class="fila" style="margin-top:14px"><button class="big pri" value="ok">Cerrar</button></div>`);
+}
+
 function pResumen() {
   const r = resumen();
   const f1 = S.desp.muestras.filter(m => !m.ctrl && !conforme(1, m.n)), f2 = S.desp.muestras.filter(m => !conforme(2, m.n));
   const lineas = r.alertas.slice().sort((a, b) => b.ts.localeCompare(a.ts)).map(l =>
     `<div><span><b>E${l.etapa}</b> <span class="mono">${esc(l.muestra)}</span></span><span class="${l.metodo === "manual" || l.alerta === "fuera_orden" ? "a" : "r"}">${esc(l.resultado === "alerta" ? ALERTA_TXT[l.alerta] || l.alerta : "Ingreso manual")}</span></div>`).join("");
   const falt = (arr, e) => arr.length ? `<div class="card"><h4>Pendientes en la etapa ${e} (${n0(arr.length)})</h4><div class="lista">${arr.slice(0, 40).map(m => `<div><span class="mono">${esc(m.n)}</span><span class="sub">${esc(m.tipo)}</span></div>`).join("")}${arr.length > 40 ? `<div><span class="sub">… y ${n0(arr.length - 40)} más</span></div>` : ""}</div></div>` : "";
-  return cab("Resumen") + `<div class="cuerpo">
-    <div class="card"><h4>Resultado</h4><div class="cont3"><div><b>${n0(r.e1)}/${n0(r.n1)}</b><span>Etapa 1</span></div><div><b>${n0(r.e2)}/${n0(r.n)}</b><span>Etapa 2</span></div><div><b style="color:${r.alertas.length ? "#B42318" : "#17633A"}">${n0(r.alertas.length)}</b><span>alertas</span></div></div></div>
+  return cabDesp("Cierre") + `<div class="cuerpo con-nav">
+    <div class="card"><div class="cont3"><div><b>${n0(r.e1)}/${n0(r.n1)}</b><span>Etapa 1</span></div><div><b>${n0(r.e2)}/${n0(r.n)}</b><span>Etapa 2</span></div><div><b style="color:${r.alertas.length ? "#B42318" : "#17633A"}">${n0(r.alertas.length)}</b><span>alertas</span></div></div></div>
+    <div class="card exp"><div class="envio"><span class="punto" style="background:${r.sinExp ? "#8A5A00" : "#17633A"}"></span>${r.sinExp ? `${n0(r.sinExp)} lecturas sin exportar` : S.lect.length ? "Todo exportado" : "Sin lecturas"}</div>
+      <button class="big ok" data-a="exportar">${ico("subir", 20)}Exportar CSV</button><div class="sub">El CSV se importa en la plataforma, en Control de Inserción.</div></div>
     <div class="card"><h4>Alertas</h4><div class="lista">${lineas || '<div><span class="sub">Sin alertas</span></div>'}</div></div>
     ${falt(f1, 1)}${falt(f2, 2)}
-    <button class="big ok" data-a="exportar">Exportar CSV</button>
-    <div class="envio" style="justify-content:center">${r.sinExp ? `${n0(r.sinExp)} lecturas sin exportar` : "Todo exportado"}</div>
-    <button class="big lin" data-a="inicio">Volver</button>
-    <button class="big lin" data-a="borrar" style="color:#B42318;margin-bottom:24px">Quitar este despacho del teléfono</button></div>`;
+    <button class="big lin" data-a="borrar" style="color:#B42318;margin-bottom:12px">Quitar este despacho del teléfono</button></div>` + nav("resumen");
 }
 function pCamara() {
   const e1 = S.etapa === 1, m = e1 ? siguienteE1() : siguienteE2();
@@ -562,8 +662,13 @@ async function render() {
       if (e) e.innerHTML = m ? `Siguiente en la guía<b class="mono">${esc(m.n)}</b>${esc(m.tipo)} · ${tramo(m)}` : "<b>Etapa completa</b>"; }
     return;
   }
-  app.innerHTML = S.pant === "resumen" && S.desp ? pResumen() : await pInicio();
+  if (!S.desp && S.pant !== "inicio") S.pant = "inicio";
+  const html = S.pant === "desp" ? pDesp() : S.pant === "muestras" ? pMuestras() : S.pant === "resumen" ? pResumen() : await pHome();
+  app.innerHTML = html;
+  const qm = $("#qm");
+  if (qm) qm.oninput = () => { S.q = qm.value; const pos = qm.selectionStart; render().then(() => { const x = $("#qm"); if (x) { x.focus(); x.setSelectionRange(pos, pos); } }); };
 }
+function ir(p) { S.pant = p; window.scrollTo(0, 0); render(); }
 
 document.addEventListener("click", async e => {
   const b = e.target.closest("[data-a]"); if (!b) return;
@@ -573,14 +678,16 @@ document.addEventListener("click", async e => {
   if (a === "pegar") pegarEnlace();
   else if (a === "qr") escanearQr();
   else if (a === "cerrarqr") cerrarQr();
-  else if (a === "abrir") { await cargarDespacho(b.dataset.d); S.pant = "inicio"; render(); }
+  else if (a === "abrir") { await cargarDespacho(b.dataset.d); S.q = ""; S.filtro = "todas"; ir("desp"); }
+  else if (a === "home") ir("inicio");
+  else if (a === "desp" || a === "muestras" || a === "resumen") ir(a);
+  else if (a === "filtro") { S.filtro = b.dataset.f; render(); }
+  else if (a === "muestra") verMuestra(b.dataset.n);
   else if (a === "e1") abrirCamara(1);
   else if (a === "e2") abrirCamara(2);
   else if (a === "cerrar") cerrarCamara();
   else if (a === "manual") ingresoManual();
   else if (a === "luz") linterna();
-  else if (a === "resumen") { S.pant = "resumen"; render(); }
-  else if (a === "inicio") { S.pant = "inicio"; render(); }
   else if (a === "exportar") exportar();
   else if (a === "usuario") pedirUsuario();
   else if (a === "borrar") {
@@ -588,7 +695,8 @@ document.addEventListener("click", async e => {
     if (!confirm(`¿Quitar el despacho ${S.desp.despacho} del teléfono?${r.sinExp ? ` Hay ${r.sinExp} lecturas sin exportar.` : ""}`)) return;
     for (const l of S.lect) await idb.del("lecturas", l.uuid);
     await idb.del("despachos", S.desp.despacho);
-    S.desp = null; S.lect = []; S.pant = "inicio"; render();
+    try { localStorage.removeItem("despacho"); } catch { /* */ }
+    S.desp = null; S.lect = []; ir("inicio");
   }
 });
 
@@ -596,13 +704,17 @@ document.addEventListener("click", async e => {
 (async function iniciar() {
   await idb.abrir();
   try { await navigator.storage?.persist?.(); } catch { /* */ }
+  S.pant = "inicio";
   if (/#gc?=/.test(location.hash)) {
     try { await importarEnlace(location.href); } catch (e) { toast(e.message, 5000); }
     history.replaceState(null, "", location.pathname);
-  } else {
-    let ult = ""; try { ult = localStorage.getItem("despacho") || ""; } catch { /* */ }
-    if (ult) await cargarDespacho(ult);
   }
   render();
+  // enlace abierto con la app ya abierta: solo cambia el '#'
+  window.addEventListener("hashchange", async () => {
+    if (!/#gc?=/.test(location.hash)) return;
+    const h = location.href; history.replaceState(null, "", location.pathname);
+    try { await importarEnlace(h); } catch (e) { toast(e.message, 5000); }
+  });
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 })();
