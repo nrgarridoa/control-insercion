@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -91,8 +91,13 @@ async function abrirCifrado(bytes, tipo) {
 async function decodificar(token, cifrado = false) {
   const bytes = cifrado ? await abrirCifrado(b64u(token), "g") : b64u(token);
   const lineas = (await inflar(bytes)).split("\n");
-  const [ver, despacho, sondaje, tipos, base, n] = lineas[0].split("|");
-  if (ver !== "I1") throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
+  const [ver, despacho, sondaje, tipos, base, n, venceMin] = lineas[0].split("|");
+  if (ver !== "I1" && ver !== "I2") throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
+  // I2: el vencimiento viaja dentro del contenido cifrado y autenticado (no se puede cambiar)
+  if (ver === "I2" && Date.now() > Number(venceMin) * 60000) {
+    const f = new Date(Number(venceMin) * 60000).toLocaleString("es-PE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    throw new Error(`Este enlace venció el ${f}: pide uno nuevo en la plataforma`);
+  }
   const T = tipos.split(";");
   let prev = Number(base), prevTo = null;
   const muestras = [];
