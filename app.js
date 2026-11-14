@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -54,45 +54,31 @@ async function inflar(bytes) {
   const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new TextDecoder().decode(await new Response(s).arrayBuffer());
 }
-/* Enlace cifrado #gc= : version(1) | sal(16) | iv(12) | AES-256-GCM (clave PBKDF2-SHA256 de la clave de campo) */
+/* Enlace cifrado #gc= : version(1) | sal(16) | iv(12) | AES-256-GCM (clave PBKDF2-SHA256 de la clave del enlace).
+   Cada enlace trae su propia clave (la muestra la plataforma junto al QR); sin espacios ni guiones, en mayúsculas. */
 const CLAVE_LS = "clave-campo", ITER = 200000;
+const normClave = c => String(c || "").replace(/[\s-]/g, "").toUpperCase();
 async function descifrar(bytes, tipo, clave) {
   if (bytes[0] !== 1) throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
   const te = new TextEncoder();
-  const base = await crypto.subtle.importKey("raw", te.encode(clave), "PBKDF2", false, ["deriveKey"]);
+  const base = await crypto.subtle.importKey("raw", te.encode(normClave(clave)), "PBKDF2", false, ["deriveKey"]);
   const k = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: bytes.slice(1, 17), iterations: ITER, hash: "SHA-256" },
     base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
   return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(17, 29), additionalData: te.encode(tipo) }, k, bytes.slice(29)));
 }
 async function abrirCifrado(bytes, tipo) {
-  let clave = ""; try { clave = localStorage.getItem(CLAVE_LS) || ""; } catch { /* */ }
+  try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }   // la clave fija de la v1.1 ya no se usa
   let error = "";
   for (;;) {
-    let recordar = true;
-    if (!clave) {
-      const fd = await dialogo(`<h3>Clave de campo</h3>${error ? `<div class="sub" style="color:#B42318">${esc(error)}</div>` : ""}
-        <label>Clave para abrir los enlaces de la plataforma</label><input type="password" name="c" required autofocus autocomplete="off">
-        <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" name="r" checked style="width:auto"> Recordar en este teléfono</label>
-        <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Abrir</button></div>`);
-      if (!fd) throw new Error("Se necesita la clave de campo para abrir este enlace");
-      clave = String(fd.get("c") || ""); recordar = fd.get("r") === "on";
-    }
-    try {
-      const r = await descifrar(bytes, tipo, clave);
-      try { if (recordar) localStorage.setItem(CLAVE_LS, clave); } catch { /* */ }
-      return r;
-    } catch (e) {
-      if (/versión/.test(e.message)) throw e;
-      try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }
-      clave = ""; error = "Clave incorrecta";
-    }
+    const fd = await dialogo(`<h3>Clave del enlace</h3>${error ? `<div class="sub" style="color:#B42318">${esc(error)}</div>` : ""}
+      <label>La clave que acompaña a este enlace (p. ej. K7M4-QX9P)</label>
+      <input name="c" required autofocus autocomplete="off" autocapitalize="characters" spellcheck="false" style="text-transform:uppercase;letter-spacing:.12em;font-family:monospace;font-size:20px">
+      <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Abrir</button></div>`);
+    if (!fd) throw new Error("Se necesita la clave del enlace para abrirlo");
+    try { return await descifrar(bytes, tipo, String(fd.get("c") || "")); }
+    catch (e) { if (/versión/.test(e.message)) throw e; error = "Clave incorrecta"; }
   }
 }
-function olvidarClave() {
-  try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }
-  toast("Clave de campo borrada de este teléfono"); render();
-}
-const hayClave = () => { try { return !!localStorage.getItem(CLAVE_LS); } catch { return false; } };
 
 async function decodificar(token, cifrado = false) {
   const bytes = cifrado ? await abrirCifrado(b64u(token), "g") : b64u(token);
@@ -501,7 +487,7 @@ async function pInicio() {
     ${pie()}</div>`;
 }
 function pie() {
-  return `<div class="sub" style="text-align:center;margin:6px 0 20px">${S.usuario ? `Valida: <b>${esc(S.usuario)}</b> · ` : ""}<a href="#" data-a="usuario">${S.usuario ? "cambiar" : "indica tu nombre"}</a>${hayClave() ? ` · <a href="#" data-a="olvidarClave">olvidar clave</a>` : ""} · v${VERSION}</div>`;
+  return `<div class="sub" style="text-align:center;margin:6px 0 20px">${S.usuario ? `Valida: <b>${esc(S.usuario)}</b> · ` : ""}<a href="#" data-a="usuario">${S.usuario ? "cambiar" : "indica tu nombre"}</a> · v${VERSION}</div>`;
 }
 function pResumen() {
   const r = resumen();
@@ -553,7 +539,6 @@ document.addEventListener("click", async e => {
   else if (a === "inicio") { S.pant = "inicio"; render(); }
   else if (a === "exportar") exportar();
   else if (a === "usuario") pedirUsuario();
-  else if (a === "olvidarClave") olvidarClave();
   else if (a === "borrar") {
     const r = resumen();
     if (!confirm(`¿Quitar el despacho ${S.desp.despacho} del teléfono?${r.sinExp ? ` Hay ${r.sinExp} lecturas sin exportar.` : ""}`)) return;
