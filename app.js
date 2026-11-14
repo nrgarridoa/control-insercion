@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.3.1";
+const VERSION = "1.4.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -91,7 +91,8 @@ async function abrirCifrado(bytes, tipo) {
 async function decodificar(token, cifrado = false) {
   const bytes = cifrado ? await abrirCifrado(b64u(token), "g") : b64u(token);
   const lineas = (await inflar(bytes)).split("\n");
-  const [ver, despacho, sondaje, tipos, base, n, venceMin] = lineas[0].split("|");
+  // I2: ...|vencimiento|llave publica del servidor (cifra lo que se exporta)|avance E1|avance E2 (bits por posicion)
+  const [ver, despacho, sondaje, tipos, base, n, venceMin, pk, p1, p2] = lineas[0].split("|");
   if (ver !== "I1" && ver !== "I2") throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
   // I2: el vencimiento viaja dentro del contenido cifrado y autenticado (no se puede cambiar)
   if (ver === "I2" && Date.now() > Number(venceMin) * 60000) {
@@ -114,7 +115,9 @@ async function decodificar(token, cifrado = false) {
       dup: p[4] ? String(Number(num) - Number(p[4])) : null, ctrl: esControl(tipo) });
   }
   if (muestras.length !== Number(n)) throw new Error("El enlace está incompleto (¿se cortó al copiarlo?).");
-  return { despacho, sondaje, muestras, cargado: ahora() };
+  const bits = t => { if (!t) return []; const b = b64u(t); return muestras.filter((m, i) => (b[i >> 3] >> (i & 7)) & 1).map(m => m.n); };
+  return { despacho, sondaje, muestras, cargado: ahora(), vence: ver === "I2" ? Number(venceMin) * 60000 : null,
+           pk: pk || "", previo: { e1: bits(p1), e2: bits(p2) } };
 }
 
 /* ------------------------------------------------------------------ estado */
@@ -123,14 +126,17 @@ try { S.usuario = localStorage.getItem("usuario") || ""; } catch { /* sin almace
 
 function indexar() {
   S.idx = new Map(S.desp.muestras.map(m => [m.n, m]));
+  S.prev = { 1: new Set(S.desp.previo?.e1 || []), 2: new Set(S.desp.previo?.e2 || []) };
 }
+/* conforme en un turno anterior (ya importado en la plataforma; viene en el enlace) */
+const previo = (etapa, n) => !!S.prev?.[etapa]?.has(n);
 function lecturasDe(etapa) { return S.lect.filter(l => l.etapa === etapa); }
 function ultima(etapa, muestra) {
   let u = null;
   for (const l of S.lect) if (l.etapa === etapa && l.muestra === muestra && (!u || l.ts > u.ts)) u = l;
   return u;
 }
-function conforme(etapa, muestra) { const u = ultima(etapa, muestra); return !!u && u.resultado === "conforme"; }
+function conforme(etapa, muestra) { const u = ultima(etapa, muestra); return u ? u.resultado === "conforme" : previo(etapa, muestra); }
 function resumen() {
   const M = S.desp.muestras, prep = M.filter(m => !m.ctrl);
   const e1 = prep.filter(m => conforme(1, m.n)).length, e2 = M.filter(m => conforme(2, m.n)).length;
@@ -138,12 +144,14 @@ function resumen() {
   const sinExp = S.lect.filter(l => !l.exportado).length;
   return { n: M.length, n1: prep.length, e1, e2, alertas, sinExp };
 }
-function siguienteE1() { return S.desp.muestras.find(m => !m.ctrl && !ultima(1, m.n)) || null; }
+function siguienteE1() { return S.desp.muestras.find(m => !m.ctrl && !ultima(1, m.n) && !previo(1, m.n)) || null; }
 function siguienteE2() {
-  // despues de la ultima muestra leida en el barrido (en el orden de la guia)
+  // despues de la ultima muestra leida en el barrido (en el orden de la guia), contando el turno anterior
   let max = 0;
   for (const l of lecturasDe(2)) { const m = S.idx.get(l.muestra); if (m && m.o > max) max = m.o; }
-  return S.desp.muestras.find(m => m.o > max && !ultima(2, m.n)) || S.desp.muestras.find(m => !ultima(2, m.n)) || null;
+  for (const n of S.prev?.[2] || []) { const m = S.idx.get(n); if (m && m.o > max) max = m.o; }
+  const libre = m => !ultima(2, m.n) && !previo(2, m.n);
+  return S.desp.muestras.find(m => m.o > max && libre(m)) || S.desp.muestras.find(libre) || null;
 }
 async function cargarDespacho(despacho) {
   S.desp = await idb.get("despachos", despacho);
@@ -373,6 +381,7 @@ async function decidirE1(a, b, metodo) {
   if (m.ctrl) { await mostrar({ c: "inf", i: "i", t: "Muestra de control", n: esc(a), d: [`${m.tipo} · no pasa por preparación`, "Se revisa en la etapa 2"], b: ["Entendido"] }); return; }
   const u = ultima(1, a);
   if (u && u.resultado === "conforme") { await mostrar({ c: "inf", i: "i", t: "Ya validada", n: esc(a), d: [`Validada a las ${hora(u.ts)}`], b: ["Entendido"] }); return; }
+  if (!u && previo(1, a)) { await mostrar({ c: "inf", i: "i", t: "Ya validada", n: esc(a), d: ["Validada en un turno anterior"], b: ["Entendido"] }); return; }
   await mostrar({ c: "ok", i: "✓", t: "Etiquetas conformes", n: esc(a), d: [`${m.tipo} · ${tramo(m)}`, "Ya puedes retirar la etiqueta GEO"], b: ["Continuar"] });
   await registrar(1, m, { ...extra, texto_1: "GEO", texto_2: "LAB", detalle: metodo === "manual" ? (S.detalleManual || "Ingreso manual") : "" });
   render();
@@ -408,6 +417,7 @@ async function decidirE2(a, b, t1, t2, metodo) {
   }
   const u = ultima(2, a);
   if (u && u.resultado === "conforme") { await mostrar({ c: "inf", i: "i", t: "Ya escaneado", n: esc(a), d: [`Pasó en el barrido a las ${hora(u.ts)}`], b: ["Entendido"] }); return; }
+  if (!u && previo(2, a)) { await mostrar({ c: "inf", i: "i", t: "Ya escaneado", n: esc(a), d: ["Pasó en el barrido de un turno anterior"], b: ["Entendido"] }); return; }
   if (u) {   // tenia una alerta y se corrigio: vuelve a pasar sin exigir el orden
     await mostrar({ c: "ok", i: "✓", t: "Corregido · LAB conformes", n: esc(a), d: [`Antes: ${ALERTA_TXT[u.alerta] || u.alerta}`], b: ["Continuar"] });
     await registrar(2, m, { ...extra, detalle: "Corregido tras " + (ALERTA_TXT[u.alerta] || u.alerta) });
@@ -463,20 +473,73 @@ async function ingresoManual() {
 /* ------------------------------------------------------------------ exportar */
 const COLUMNAS = ["uuid", "despacho", "sondaje", "etapa", "orden", "muestra", "resultado", "alerta", "detalle", "codigo_1", "codigo_2",
   "texto_1", "texto_2", "metodo", "usuario", "dispositivo", "ts", "app"];
+/* Cifrado del archivo que se entrega: ECDH P-256 efimero con la llave publica del servidor + HKDF-SHA256 + AES-256-GCM.
+   Solo la plataforma (con su llave privada) lo abre al importarlo. Formato: INSC1.<epk>.<iv>.<cifrado> (base64url). */
+const b64uEnc = u => { let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
+async function cifrarExport(texto, pk) {
+  const te = new TextEncoder(), info = te.encode("insercion-csv");
+  const pub = await crypto.subtle.importKey("raw", b64u(pk), { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const e = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const epk = new Uint8Array(await crypto.subtle.exportKey("raw", e.publicKey));
+  const bits = await crypto.subtle.deriveBits({ name: "ECDH", public: pub }, e.privateKey, 256);
+  const hk = await crypto.subtle.importKey("raw", bits, "HKDF", false, ["deriveKey"]);
+  const k = await crypto.subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: epk, info }, hk, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: info }, k, te.encode(texto)));
+  return "INSC1." + [epk, iv, ct].map(b64uEnc).join(".");
+}
 async function exportar() {
   if (!S.lect.length) { toast("Todavía no hay lecturas en este despacho"); return; }
   const q = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const csv = "﻿" + COLUMNAS.join(",") + "\n" + [...S.lect].sort((x, y) => x.ts.localeCompare(y.ts))
+  const csv = COLUMNAS.join(",") + "\n" + [...S.lect].sort((x, y) => x.ts.localeCompare(y.ts))
     .map(l => COLUMNAS.map(c => q(l[c])).join(",")).join("\n");
-  const nombre = `Insercion_${S.desp.despacho}_${new Date().toISOString().slice(0, 10)}.csv`;
-  const file = new File([csv], nombre, { type: "text/csv" });
+  const base = `Insercion_${S.desp.despacho}_${new Date().toISOString().slice(0, 16).replace(/[T:]/g, "-")}`;
+  const cifrado = !!S.desp.pk;
+  const file = cifrado ? new File([await cifrarExport(csv, S.desp.pk)], base + ".insc", { type: "application/octet-stream" })
+                       : new File(["﻿" + csv], base + ".csv", { type: "text/csv" });
   let ok = false;
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: nombre }); ok = true; } catch (e) { if (e.name === "AbortError") return; }
+    try { await navigator.share({ files: [file], title: file.name }); ok = true; } catch (e) { if (e.name === "AbortError") return; }
   }
-  if (!ok) { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = nombre; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+  if (!ok) { const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
   for (const l of S.lect) if (!l.exportado) { l.exportado = true; await idb.put("lecturas", l); }
-  toast("CSV exportado: " + nombre, 3500); render();
+  render();
+  const fd = await dialogo(`<div class="clave-h"><span>📦</span><h3>¿Entregaste el archivo?</h3>
+      <div class="sub">${esc(file.name)}${cifrado ? "<br>Va cifrado: solo la plataforma lo puede abrir." : ""}</div></div>
+    <p class="aviso-borrar">Al confirmar, el despacho y sus lecturas se <b>borran de este teléfono</b>. Para seguir, otro turno abre un enlace nuevo de la plataforma.</p>
+    <div class="fila" style="margin-top:14px"><button class="big lin" value="no" formnovalidate>Todavía no</button><button class="big pri" value="ok">Sí, entregado</button></div>`);
+  if (fd) await entregar();
+  else toast("Archivo generado. El despacho sigue en el teléfono hasta que confirmes la entrega.", 4000);
+}
+/* deja solo una constancia (sin numeros de muestra ni tramos) */
+async function entregar() {
+  const r = resumen(), d = S.desp;
+  for (const l of S.lect) await idb.del("lecturas", l.uuid);
+  await idb.put("despachos", { despacho: d.despacho, sondaje: d.sondaje, cargado: d.cargado, entregado: ahora(),
+    n: r.n, n1: r.n1, e1: r.e1, e2: r.e2, alertas: r.alertas.length, lecturas: S.lect.length, muestras: [] });
+  try { localStorage.removeItem("despacho"); } catch { /* */ }
+  S.desp = null; S.lect = [];
+  toast(`Despacho ${d.despacho} entregado y borrado del teléfono`, 4000);
+  ir("inicio");
+}
+/* despachos sin actividad: se borran 3 dias despues de vencido el enlace (o de la ultima lectura, lo que sea despues) */
+const H = 3600000, DIAS_INACTIVO = 3;
+function limiteBorrado(d, ultimaTs) {
+  const venc = d.vence || (Date.parse(d.cargado) || 0) + 48 * H;
+  return Math.max(venc, Date.parse(ultimaTs || "") || 0, Date.parse(d.cargado) || 0) + DIAS_INACTIVO * 24 * H;
+}
+async function limpiezaAuto() {
+  const borrados = [];
+  for (const d of await idb.all("despachos")) {
+    if (d.entregado) { if (Date.now() - Date.parse(d.entregado) > 30 * 24 * H) await idb.del("despachos", d.despacho); continue; }
+    const L = await idb.porDespacho(d.despacho);
+    if (Date.now() > limiteBorrado(d, L.reduce((a, l) => (l.ts > a ? l.ts : a), ""))) {
+      for (const l of L) await idb.del("lecturas", l.uuid);
+      await idb.del("despachos", d.despacho); borrados.push(d.despacho);
+    }
+  }
+  if (borrados.length) toast(`Borrados por inactividad: ${borrados.join(", ")}`, 6000);
 }
 
 /* ------------------------------------------------------------------ cargar despacho desde el enlace */
@@ -485,7 +548,7 @@ async function importarEnlace(texto) {
   if (!m) throw new Error("El enlace no es de un despacho del Control de Inserción");
   const d = await decodificar(m[2], m[1] === "gc");
   const previo = await idb.get("despachos", d.despacho);
-  if (previo && previo.muestras.length !== d.muestras.length) {
+  if (previo && !previo.entregado && previo.muestras.length !== d.muestras.length) {
     if (!confirm(`El despacho ${d.despacho} ya estaba en el teléfono con otra guía. ¿Reemplazar la guía? (las lecturas se conservan)`)) return;
   }
   await idb.put("despachos", d);
@@ -552,15 +615,20 @@ function nav(activa) {
 async function resumenDe(d) {
   const L = d.despacho === S.desp?.despacho ? S.lect : await idb.porDespacho(d.despacho);
   const ult = (e, n) => { let u = null; for (const l of L) if (l.etapa === e && l.muestra === n && (!u || l.ts > u.ts)) u = l; return u; };
+  const pv = { 1: new Set(d.previo?.e1 || []), 2: new Set(d.previo?.e2 || []) };
+  const ok = (e, n) => { const u = ult(e, n); return u ? u.resultado === "conforme" : pv[e].has(n); };
   const prep = d.muestras.filter(m => !m.ctrl);
-  const e1 = prep.filter(m => ult(1, m.n)?.resultado === "conforme").length, e2 = d.muestras.filter(m => ult(2, m.n)?.resultado === "conforme").length;
+  const e1 = prep.filter(m => ok(1, m.n)).length, e2 = d.muestras.filter(m => ok(2, m.n)).length;
+  const ultima = L.reduce((a, l) => (l.ts > a ? l.ts : a), "");
   return { n: d.muestras.length, n1: prep.length, e1, e2, alertas: L.filter(l => l.resultado === "alerta").length,
-           sinExp: L.filter(l => !l.exportado).length, ultima: L.reduce((a, l) => (l.ts > a ? l.ts : a), "") };
+           sinExp: L.filter(l => !l.exportado).length, ultima, borra: limiteBorrado(d, ultima) };
 }
 
 async function pHome() {
-  const lista = (await idb.all("despachos")).sort((a, b) => b.cargado.localeCompare(a.cargado));
+  const todos = (await idb.all("despachos")).sort((a, b) => b.cargado.localeCompare(a.cargado));
+  const lista = todos.filter(d => !d.entregado), entregados = todos.filter(d => d.entregado).sort((a, b) => b.entregado.localeCompare(a.entregado));
   const filas = await Promise.all(lista.map(async d => ({ d, r: await resumenDe(d) })));
+  const fecha = t => new Date(t).toLocaleString("es-PE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
   const tarjeta = ({ d, r }) => {
     const p = pct(r.e1 + r.e2, r.n1 + r.n), fin = r.e1 >= r.n1 && r.e2 >= r.n;
     return `<button class="dcard" data-a="abrir" data-d="${esc(d.despacho)}">
@@ -569,15 +637,19 @@ async function pHome() {
         <div class="tags"><span>E1 ${n0(r.e1)}/${n0(r.n1)}</span><span>E2 ${n0(r.e2)}/${n0(r.n)}</span>
           ${r.alertas ? `<span class="t-mal">${n0(r.alertas)} alerta${r.alertas === 1 ? "" : "s"}</span>` : ""}${r.sinExp ? `<span class="t-wa">${n0(r.sinExp)} sin exportar</span>` : ""}
           ${fin && !r.sinExp ? `<span class="t-ok">Completo</span>` : ""}</div>
-        <em>${r.ultima ? "Última lectura " + cuando(r.ultima) : "Cargado " + cuando(d.cargado)}</em></div>${ico("der")}</button>`;
+        <em>${r.ultima ? "Última lectura " + cuando(r.ultima) : "Cargado " + cuando(d.cargado)}</em>
+        ${r.borra - Date.now() < 24 * H ? `<em class="borra">Se borra el ${fecha(r.borra)} si no hay actividad</em>` : ""}</div>${ico("der")}</button>`;
   };
+  const constancia = d => `<div class="ecard">${ico("ok", 18)}<div><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · E1 ${n0(d.e1)}/${n0(d.n1)} · E2 ${n0(d.e2)}/${n0(d.n)}${d.alertas ? ` · ${n0(d.alertas)} alerta${d.alertas === 1 ? "" : "s"}` : ""}</small>
+      <em>Entregado ${fecha(d.entregado)} · borrado del teléfono</em></div><button class="ib" data-a="quitarc" data-d="${esc(d.despacho)}" aria-label="Quitar">${ico("x", 16)}</button></div>`;
   return cabInicio() + `<div class="cuerpo">
     <div class="acciones">
       <button class="accion pri" data-a="qr">${ico("qr", 30)}<b>Escanear QR</b><span>del despacho en la plataforma</span></button>
       <button class="accion" data-a="pegar">${ico("link", 28)}<b>Pegar enlace</b><span>si te lo enviaron por mensaje</span></button></div>
     <div class="sec">Despachos en el teléfono <span>${n0(lista.length)}</span></div>
     ${filas.length ? filas.map(tarjeta).join("") : `<div class="card vacio">${ico("qr", 40)}<p>Todavía no hay despachos.<br>Escanea el QR que muestra la plataforma en <b>Control de Inserción</b> para empezar.</p></div>`}
-    <div class="pie">Los datos quedan solo en este teléfono hasta que exportes el CSV · v${VERSION}</div></div>`;
+    ${entregados.length ? `<div class="sec">Entregados <span>${n0(entregados.length)}</span></div>${entregados.map(constancia).join("")}` : ""}
+    <div class="pie">Al entregar el archivo, el despacho se borra de este teléfono · v${VERSION}</div></div>`;
 }
 
 function pDesp() {
@@ -604,8 +676,8 @@ function pDesp() {
 const FILTROS = [["todas", "Todas"], ["p1", "Pendientes E1"], ["p2", "Pendientes E2"], ["alertas", "Alertas"], ["ctl", "Controles"]];
 function estadoMuestra(m) {
   const u1 = m.ctrl ? null : ultima(1, m.n), u2 = ultima(2, m.n);
-  const st = u => !u ? "pend" : u.resultado === "conforme" ? (u.metodo === "manual" ? "man" : "ok") : "mal";
-  return { e1: m.ctrl ? "na" : st(u1), e2: st(u2) };
+  const st = (u, e) => !u ? (previo(e, m.n) ? "ok" : "pend") : u.resultado === "conforme" ? (u.metodo === "manual" ? "man" : "ok") : "mal";
+  return { e1: m.ctrl ? "na" : st(u1, 1), e2: st(u2, 2) };
 }
 function pMuestras() {
   const q = (S.q || "").trim(), f = S.filtro || "todas";
@@ -632,7 +704,9 @@ async function verMuestra(n) {
   const L = S.lect.filter(l => l.muestra === n).sort((a, b) => b.ts.localeCompare(a.ts));
   await dialogo(`<h3 class="mono">${esc(n)}</h3><div class="sub">${esc(m.tipo)} · ${tramo(m)} · orden ${m.o} en la guía${m.dup ? ` · duplicado de ${esc(m.dup)}` : ""}</div>
     <div class="hist">${L.length ? L.map(l => `<div><b>E${l.etapa}</b><span class="${l.resultado === "alerta" ? "r" : ""}">${esc(l.resultado === "alerta" ? ALERTA_TXT[l.alerta] || l.alerta : "Conforme")}${l.metodo === "manual" ? " · manual" : ""}</span>
-      <em>${cuando(l.ts)}${l.usuario ? " · " + esc(l.usuario) : ""}</em>${l.detalle ? `<small>${esc(l.detalle)}</small>` : ""}</div>`).join("") : '<div class="sub">Sin lecturas</div>'}</div>
+      <em>${cuando(l.ts)}${l.usuario ? " · " + esc(l.usuario) : ""}</em>${l.detalle ? `<small>${esc(l.detalle)}</small>` : ""}</div>`).join("") : ""}
+      ${[1, 2].filter(e => previo(e, n) && !L.some(l => l.etapa === e)).map(e => `<div><b>E${e}</b><span>Conforme</span><em>en un turno anterior</em></div>`).join("")}
+      ${!L.length && !previo(1, n) && !previo(2, n) ? '<div class="sub">Sin lecturas</div>' : ""}</div>
     <div class="fila" style="margin-top:14px"><button class="big pri" value="ok">Cerrar</button></div>`);
 }
 
@@ -645,7 +719,8 @@ function pResumen() {
   return cabDesp("Cierre") + `<div class="cuerpo con-nav">
     <div class="card"><div class="cont3"><div><b>${n0(r.e1)}/${n0(r.n1)}</b><span>Etapa 1</span></div><div><b>${n0(r.e2)}/${n0(r.n)}</b><span>Etapa 2</span></div><div><b style="color:${r.alertas.length ? "#B42318" : "#17633A"}">${n0(r.alertas.length)}</b><span>alertas</span></div></div></div>
     <div class="card exp"><div class="envio"><span class="punto" style="background:${r.sinExp ? "#8A5A00" : "#17633A"}"></span>${r.sinExp ? `${n0(r.sinExp)} lecturas sin exportar` : S.lect.length ? "Todo exportado" : "Sin lecturas"}</div>
-      <button class="big ok" data-a="exportar">${ico("subir", 20)}Exportar CSV</button><div class="sub">El CSV se importa en la plataforma, en Control de Inserción.</div></div>
+      <button class="big ok" data-a="exportar">${ico("subir", 20)}Exportar y entregar</button>
+      <div class="sub">${S.desp.pk ? "El archivo va cifrado: solo la plataforma lo puede abrir. " : ""}Al confirmar la entrega, el despacho se borra de este teléfono.</div></div>
     <div class="card"><h4>Alertas</h4><div class="lista">${lineas || '<div><span class="sub">Sin alertas</span></div>'}</div></div>
     ${falt(f1, 1)}${falt(f2, 2)}
     <button class="big lin" data-a="borrar" style="color:#B42318;margin-bottom:12px">Quitar este despacho del teléfono</button></div>` + nav("resumen");
@@ -695,6 +770,7 @@ document.addEventListener("click", async e => {
   else if (a === "luz") linterna();
   else if (a === "exportar") exportar();
   else if (a === "usuario") pedirUsuario();
+  else if (a === "quitarc") { await idb.del("despachos", b.dataset.d); render(); }
   else if (a === "borrar") {
     const r = resumen();
     if (!confirm(`¿Quitar el despacho ${S.desp.despacho} del teléfono?${r.sinExp ? ` Hay ${r.sinExp} lecturas sin exportar.` : ""}`)) return;
@@ -710,6 +786,7 @@ document.addEventListener("click", async e => {
   await idb.abrir();
   try { await navigator.storage?.persist?.(); } catch { /* */ }
   S.pant = "inicio";
+  try { await limpiezaAuto(); } catch { /* */ }
   if (/#gc?=/.test(location.hash)) {
     try { await importarEnlace(location.href); } catch (e) { toast(e.message, 5000); }
     history.replaceState(null, "", location.pathname);
