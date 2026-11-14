@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.2.0";
+const VERSION = "1.2.1";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -252,6 +252,43 @@ async function abrirCamara(etapa) {
   S.scan = { on: true, clave: "", veces: 0, ocupado: false, desde: Date.now() };
   bucle();
 }
+/* QR del despacho (el que muestra la plataforma): se lee con la misma camara y se carga como un enlace pegado */
+async function escanearQr() {
+  prepararZxing();
+  S.pant = "qr"; render();
+  try {
+    S.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+  } catch (e) { toast("No se pudo abrir la cámara: " + (e.message || e), 5000); cerrarQr(); return; }
+  const v = $("#video"); v.srcObject = S.stream; await v.play().catch(() => {});
+  S.qr = { on: true }; bucleQr();
+}
+function cerrarQr() {
+  if (S.qr) S.qr.on = false;
+  S.stream?.getTracks().forEach(t => t.stop()); S.stream = null;
+  S.pant = "inicio"; render();
+}
+async function bucleQr() {
+  const q = S.qr; if (!q || !q.on) return;
+  const v = $("#video");
+  if (!v || !v.videoWidth) { setTimeout(bucleQr, 150); return; }
+  try {
+    const k = Math.min(1, 1280 / Math.max(v.videoWidth, v.videoHeight));
+    const c = q.canvas || (q.canvas = document.createElement("canvas"));
+    c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+    const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(v, 0, 0, c.width, c.height);
+    const r = await ZXingWASM.readBarcodes(g.getImageData(0, 0, c.width, c.height), { formats: ["QRCode"], maxNumberOfSymbols: 1, tryHarder: true });
+    const t = r.find(x => x.isValid && /#gc?=/.test(x.text || ""))?.text;
+    if (t) { cerrarQr(); try { await importarEnlace(t); } catch (e) { toast(e.message, 4500); } return; }
+    if (r.some(x => x.isValid)) pista("Ese QR no es de un despacho del Control de Inserción", "wa");
+  } catch { /* cuadro sin lectura */ }
+  setTimeout(bucleQr, 120);
+}
+function pQr() {
+  return `<div class="cam"><video id="video" playsinline muted></video><div class="marco" id="marco"></div>
+    <div class="arriba"><small>Control de Inserción</small><b>QR del despacho</b>
+      <div class="tip" id="tip">Encuadra el QR que muestra la plataforma</div></div>
+    <div class="abajo"><div class="botones"><button data-a="cerrarqr">Cancelar</button><button class="icono" data-a="luz" title="Linterna">💡</button></div></div></div>`;
+}
 function cerrarCamara() {
   if (S.scan) S.scan.on = false;
   S.stream?.getTracks().forEach(t => t.stop()); S.stream = null;
@@ -379,6 +416,9 @@ async function decidirE2(a, b, t1, t2, metodo) {
 function dialogo(html) {
   const d = $("#dlg"), f = $("#dlgForm");
   f.innerHTML = html;
+  d.returnValue = "";
+  // Enter / "Ir" del teclado: el navegador usaria el primer boton (Cancelar); se usa el principal
+  f.onkeydown = e => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); f.querySelector("button.pri")?.click(); } };
   d.showModal();
   return new Promise(res => { d.onclose = () => res(d.returnValue === "ok" ? new FormData(f) : null); });
 }
@@ -463,8 +503,9 @@ async function pInicio() {
   const lista = (await idb.all("despachos")).sort((a, b) => b.cargado.localeCompare(a.cargado));
   if (!S.desp) {
     return cab("Control de Inserción") + `<div class="cuerpo">
-      <div class="card"><div class="vacio">Abre en este teléfono el <b>enlace del despacho</b> que te envían desde la plataforma, o pégalo aquí.</div>
-        <button class="big pri" data-a="pegar">Pegar enlace del despacho</button></div>
+      <div class="card"><div class="vacio">Escanea el <b>QR del despacho</b> que muestra la plataforma, abre su enlace en este teléfono o pégalo aquí.</div>
+        <button class="big pri" data-a="qr">Escanear QR del despacho</button>
+        <button class="big lin" data-a="pegar">Pegar enlace del despacho</button></div>
       ${lista.length ? `<div class="card"><h4>Despachos en el teléfono</h4>${lista.map(d => `<div class="desp"><div class="t"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(d.muestras.length)} muestras</small></div><button data-a="abrir" data-d="${esc(d.despacho)}">Abrir</button></div>`).join("")}</div>` : ""}
       ${pie()}</div>`;
   }
@@ -483,7 +524,7 @@ async function pInicio() {
     <div class="card"><h4>Cierre</h4><button class="big sc" data-a="resumen">Ver resumen y exportar</button>
       <div class="envio"><span class="punto" style="background:${r.sinExp ? "#8A5A00" : "#17633A"}"></span>${r.sinExp ? `${n0(r.sinExp)} lecturas sin exportar` : (S.lect.length ? "Todo exportado" : "Sin lecturas")} · guardado en el teléfono</div></div>
     <div class="card"><h4>Otros despachos</h4>${lista.filter(d => d.despacho !== S.desp.despacho).map(d => `<div class="desp"><div class="t"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(d.muestras.length)} muestras</small></div><button data-a="abrir" data-d="${esc(d.despacho)}">Abrir</button></div>`).join("") || '<div class="sub">Ninguno</div>'}
-      <button class="big lin" data-a="pegar">Pegar enlace de otro despacho</button></div>
+      <button class="big lin" data-a="qr">Escanear QR de otro despacho</button><button class="big lin" data-a="pegar">Pegar enlace de otro despacho</button></div>
     ${pie()}</div>`;
 }
 function pie() {
@@ -514,6 +555,7 @@ function pCamara() {
 }
 async function render() {
   const app = $("#app");
+  if (S.pant === "qr") { if (!$("#video")) app.innerHTML = pQr(); return; }
   if (S.pant === "camara") {
     if (!$("#video")) app.innerHTML = pCamara();
     else { const e = document.querySelector(".esperada"); const m = S.etapa === 1 ? siguienteE1() : siguienteE2();
@@ -529,6 +571,8 @@ document.addEventListener("click", async e => {
   const a = b.dataset.a;
   try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume?.(); } catch { /* */ }
   if (a === "pegar") pegarEnlace();
+  else if (a === "qr") escanearQr();
+  else if (a === "cerrarqr") cerrarQr();
   else if (a === "abrir") { await cargarDespacho(b.dataset.d); S.pant = "inicio"; render(); }
   else if (a === "e1") abrirCamara(1);
   else if (a === "e2") abrirCamara(2);
