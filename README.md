@@ -24,8 +24,12 @@ reimportar el mismo archivo no duplica nada.
 - Formato del enlace: ver `backend/app/modules/ddh_insercion/guia.py` en la plataforma. Los datos van después
   del `#`, que el navegador no envía a ningún servidor. La plataforma los entrega cifrados (`#gc=`, AES-256-GCM
   con clave PBKDF2-SHA256, ver `backend/app/core/cifrado_campo.py`). Cada enlace tiene su propia clave, que la
-  plataforma muestra junto al QR y se pasa por otra vía; la app la pide al abrirlo y no la guarda. Este
-  repositorio no contiene datos.
+  plataforma muestra junto al QR y se pasa por otra vía; la app la pide al abrirlo y no la guarda. El enlace
+  vence (48 h por defecto) y trae el avance ya importado, para que otro turno continúe donde quedó.
+- Entrega: el archivo sale cifrado (`.insc`: ECDH P-256 + HKDF + AES-GCM con la llave pública del servidor que
+  viene en el enlace); solo la plataforma lo abre. Al confirmar la entrega, el despacho se borra del teléfono y
+  queda una constancia sin datos de muestras. Los despachos sin actividad se borran 3 días después de vencido
+  el enlace. Este repositorio no contiene datos.
 
 Requiere HTTPS (la cámara solo funciona en un sitio seguro). Al publicar una versión nueva, subir
 `CACHE` en `sw.js` y `VERSION` en `app.js`.
