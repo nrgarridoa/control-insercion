@@ -21,8 +21,10 @@ reimportar el mismo archivo no duplica nada.
 - Palabra LAB/GEO junto al código: [tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) con
   el modelo `eng` (best_int). Si no se distingue, la app lo pregunta.
 - Todo va en `vendor/` y queda en la caché del service worker (unos 16 MB), sin depender de internet.
-- Formato del enlace (`#g=`): ver `backend/app/modules/ddh_insercion/guia.py` en la plataforma. Los datos van
-  después del `#`, que el navegador no envía a ningún servidor.
+- Formato del enlace: ver `backend/app/modules/ddh_insercion/guia.py` en la plataforma. Los datos van después
+  del `#`, que el navegador no envía a ningún servidor. La plataforma los entrega cifrados (`#gc=`, AES-256-GCM
+  con clave PBKDF2-SHA256 de la clave de campo, ver `backend/app/core/cifrado_campo.py`): la app pide la clave
+  la primera vez y puede recordarla en el teléfono. Este repositorio no contiene datos.
 
 Requiere HTTPS (la cámara solo funciona en un sitio seguro). Al publicar una versión nueva, subir
 `CACHE` en `sw.js` y `VERSION` en `app.js`.

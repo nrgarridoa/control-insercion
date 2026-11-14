@@ -1,5 +1,5 @@
 // Guarda la app completa en el teléfono para que funcione sin señal.
-const CACHE = "control-insercion-v1.0.1";
+const CACHE = "control-insercion-v1.1.0";
 const ARCHIVOS = [
   "./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png",
   "vendor/zxing/zxing-reader.js", "vendor/zxing/zxing_reader.wasm",

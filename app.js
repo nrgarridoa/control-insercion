@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.0.1";
+const VERSION = "1.1.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -54,8 +54,49 @@ async function inflar(bytes) {
   const s = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new TextDecoder().decode(await new Response(s).arrayBuffer());
 }
-async function decodificar(token) {
-  const lineas = (await inflar(b64u(token))).split("\n");
+/* Enlace cifrado #gc= : version(1) | sal(16) | iv(12) | AES-256-GCM (clave PBKDF2-SHA256 de la clave de campo) */
+const CLAVE_LS = "clave-campo", ITER = 200000;
+async function descifrar(bytes, tipo, clave) {
+  if (bytes[0] !== 1) throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
+  const te = new TextEncoder();
+  const base = await crypto.subtle.importKey("raw", te.encode(clave), "PBKDF2", false, ["deriveKey"]);
+  const k = await crypto.subtle.deriveKey({ name: "PBKDF2", salt: bytes.slice(1, 17), iterations: ITER, hash: "SHA-256" },
+    base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(17, 29), additionalData: te.encode(tipo) }, k, bytes.slice(29)));
+}
+async function abrirCifrado(bytes, tipo) {
+  let clave = ""; try { clave = localStorage.getItem(CLAVE_LS) || ""; } catch { /* */ }
+  let error = "";
+  for (;;) {
+    let recordar = true;
+    if (!clave) {
+      const fd = await dialogo(`<h3>Clave de campo</h3>${error ? `<div class="sub" style="color:#B42318">${esc(error)}</div>` : ""}
+        <label>Clave para abrir los enlaces de la plataforma</label><input type="password" name="c" required autofocus autocomplete="off">
+        <label style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" name="r" checked style="width:auto"> Recordar en este teléfono</label>
+        <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Abrir</button></div>`);
+      if (!fd) throw new Error("Se necesita la clave de campo para abrir este enlace");
+      clave = String(fd.get("c") || ""); recordar = fd.get("r") === "on";
+    }
+    try {
+      const r = await descifrar(bytes, tipo, clave);
+      try { if (recordar) localStorage.setItem(CLAVE_LS, clave); } catch { /* */ }
+      return r;
+    } catch (e) {
+      if (/versión/.test(e.message)) throw e;
+      try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }
+      clave = ""; error = "Clave incorrecta";
+    }
+  }
+}
+function olvidarClave() {
+  try { localStorage.removeItem(CLAVE_LS); } catch { /* */ }
+  toast("Clave de campo borrada de este teléfono"); render();
+}
+const hayClave = () => { try { return !!localStorage.getItem(CLAVE_LS); } catch { return false; } };
+
+async function decodificar(token, cifrado = false) {
+  const bytes = cifrado ? await abrirCifrado(b64u(token), "g") : b64u(token);
+  const lineas = (await inflar(bytes)).split("\n");
   const [ver, despacho, sondaje, tipos, base, n] = lineas[0].split("|");
   if (ver !== "I1") throw new Error("Enlace de una versión que esta app no conoce. Actualiza la app.");
   const T = tipos.split(";");
@@ -401,9 +442,9 @@ async function exportar() {
 
 /* ------------------------------------------------------------------ cargar despacho desde el enlace */
 async function importarEnlace(texto) {
-  const m = String(texto).match(/#g=([\w-]+)/);
+  const m = String(texto).match(/#(gc?)=([\w-]+)/);
   if (!m) throw new Error("El enlace no es de un despacho del Control de Inserción");
-  const d = await decodificar(m[1]);
+  const d = await decodificar(m[2], m[1] === "gc");
   const previo = await idb.get("despachos", d.despacho);
   if (previo && previo.muestras.length !== d.muestras.length) {
     if (!confirm(`El despacho ${d.despacho} ya estaba en el teléfono con otra guía. ¿Reemplazar la guía? (las lecturas se conservan)`)) return;
@@ -418,7 +459,7 @@ async function pegarEnlace() {
     <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri" value="ok">Cargar</button></div>`);
   try {   // si el navegador deja leer el portapapeles, se rellena solo
     const t = await Promise.race([navigator.clipboard?.readText?.() ?? Promise.resolve(""), new Promise(r => setTimeout(() => r(""), 1200))]);
-    const a = $("#txtEnlace"); if (a && !a.value && /#g=/.test(t || "")) a.value = t;
+    const a = $("#txtEnlace"); if (a && !a.value && /#gc?=/.test(t || "")) a.value = t;
   } catch { /* sin permiso: se pega a mano */ }
   const fd = await abierto;
   const t = fd ? String(fd.get("t") || "") : "";
@@ -460,7 +501,7 @@ async function pInicio() {
     ${pie()}</div>`;
 }
 function pie() {
-  return `<div class="sub" style="text-align:center;margin:6px 0 20px">${S.usuario ? `Valida: <b>${esc(S.usuario)}</b> · ` : ""}<a href="#" data-a="usuario">${S.usuario ? "cambiar" : "indica tu nombre"}</a> · v${VERSION}</div>`;
+  return `<div class="sub" style="text-align:center;margin:6px 0 20px">${S.usuario ? `Valida: <b>${esc(S.usuario)}</b> · ` : ""}<a href="#" data-a="usuario">${S.usuario ? "cambiar" : "indica tu nombre"}</a>${hayClave() ? ` · <a href="#" data-a="olvidarClave">olvidar clave</a>` : ""} · v${VERSION}</div>`;
 }
 function pResumen() {
   const r = resumen();
@@ -512,6 +553,7 @@ document.addEventListener("click", async e => {
   else if (a === "inicio") { S.pant = "inicio"; render(); }
   else if (a === "exportar") exportar();
   else if (a === "usuario") pedirUsuario();
+  else if (a === "olvidarClave") olvidarClave();
   else if (a === "borrar") {
     const r = resumen();
     if (!confirm(`¿Quitar el despacho ${S.desp.despacho} del teléfono?${r.sinExp ? ` Hay ${r.sinExp} lecturas sin exportar.` : ""}`)) return;
@@ -525,7 +567,7 @@ document.addEventListener("click", async e => {
 (async function iniciar() {
   await idb.abrir();
   try { await navigator.storage?.persist?.(); } catch { /* */ }
-  if (/#g=/.test(location.hash)) {
+  if (/#gc?=/.test(location.hash)) {
     try { await importarEnlace(location.href); } catch (e) { toast(e.message, 5000); }
     history.replaceState(null, "", location.pathname);
   } else {
