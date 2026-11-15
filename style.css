@@ -145,3 +145,12 @@ dialog input.clave-in::placeholder{color:#D1D5DB}
 .dquita{border:0;background:#fff;color:#B42318;border-radius:16px;width:48px;flex:none;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(15,23,42,.06)}
 .dquita:active{background:#FDECEC}
 .big.pri.peligro{background:#B42318;border-color:#B42318}
+
+.cam .tip.ok{background:rgba(23,99,58,.92)}
+.cam .esperada .pasos{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.cam .esperada .pasos span{border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;background:#E5E7EB;color:#6B7280}
+.cam .esperada .pasos span.on{background:#012B77;color:#fff}
+.cam .esperada .pasos span.ok{background:#E7F5EC;color:#17633A}
+.cam .esperada .pasos span.ok::before{content:'✓ '}
+.cam .esperada small.desp{display:block;margin-top:6px;color:#6B7280;font-size:12px}
+.card.cont{border:2px solid #012B77}

@@ -1,12 +1,13 @@
 /* Control de Inserción · PWA de campo (QAQC Drillholes)
- * Etapa 1: GEO = LAB (solo muestras preparadas; los controles MB/MC no pasan por preparación).
+ * Inserción continua (por defecto): se recorre la guía en orden y cada muestra pasa por sus pasos; el paso 2 se lee en dos tiempos.
+ * Etapa 1: GEO = LAB (todas las que tienen GEO: ASSAY y duplicados; los controles MB/MC no).
  * Etapa 2: barrido en el orden de la guía; se leen juntas la LAB de la bolsita y la del sobre
  *          (mismo número y las dos dicen LAB: las GEO no se envían al laboratorio).
  * Todo se guarda en el teléfono (IndexedDB). Al terminar se exporta un CSV que se importa en la plataforma.
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.4.1";
+const VERSION = "1.5.0";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -145,6 +146,20 @@ function resumen() {
   return { n: M.length, n1: prep.length, e1, e2, alertas, sinExp };
 }
 function siguienteE1() { return S.desp.muestras.find(m => !m.ctrl && !ultima(1, m.n) && !previo(1, m.n)) || null; }
+/* Insercion continua (como se trabaja en campo): se recorre la guia en orden y cada muestra pasa por sus pasos:
+   1 GEO = LAB (todas las que tienen GEO: ASSAY y duplicados; los controles MB/MC no) y 2 bolsita LAB al sobre LAB. */
+const pasosDe = m => (m.ctrl ? [2] : [1, 2]);
+const tocado = (e, n) => !!ultima(e, n) || previo(e, n);
+function actualC() {
+  const ms = S.desp.muestras;
+  const pend = m => pasosDe(m).find(e => !tocado(e, m.n));
+  let max = -1;
+  for (const l of S.lect) { const m = S.idx.get(l.muestra); if (m && m.o > max) max = m.o; }
+  for (const e of [1, 2]) for (const n of S.prev?.[e] || []) { const m = S.idx.get(n); if (m && m.o > max) max = m.o; }
+  const m = ms.find(x => x.o >= max && pend(x)) || ms.find(pend);
+  return m ? { m, paso: pend(m), pos: ms.indexOf(m) + 1, total: ms.length } : null;
+}
+function pasoActual() { return S.etapa === "c" ? (actualC()?.paso ?? 2) : S.etapa; }
 function siguienteE2() {
   // despues de la ultima muestra leida en el barrido (en el orden de la guia), contando el turno anterior
   let max = 0;
@@ -200,6 +215,8 @@ function mostrar({ c, i, t, n, d = [], b }) {
   return new Promise(res => {
     resolverRes = res;
     e.querySelectorAll("button").forEach(x => x.onclick = () => { e.hidden = true; resolverRes = null; res(Number(x.dataset.k)); });
+    // insercion continua: los conformes se cierran solos para seguir sin tocar la pantalla
+    if (c === "ok" && S.etapa === "c" && b.length === 1) setTimeout(() => { if (resolverRes === res) e.querySelector("button")?.click(); }, 1100);
   });
 }
 
@@ -245,6 +262,7 @@ function recorteTexto(canvas, pos) {
   return c;
 }
 async function palabra(canvas, pos) {
+  if (!ocr && ocrCargando) { try { await ocrCargando; } catch { /* sin lector de texto: se pregunta */ } }
   const c = recorteTexto(canvas, pos);
   if (!c || !ocr) return "?";
   const r = await ocr.recognize(c);
@@ -260,7 +278,7 @@ async function palabra(canvas, pos) {
 async function abrirCamara(etapa) {
   if (!S.usuario) { await pedirUsuario(); if (!S.usuario) return; }
   prepararZxing();
-  if (etapa === 2) prepararOcr()?.catch(() => toast("No se pudo cargar el lector de texto: se preguntará LAB/GEO", 4000));
+  if (etapa !== 1) prepararOcr()?.catch(() => toast("No se pudo cargar el lector de texto: se preguntará LAB/GEO", 4000));
   S.pant = "camara"; S.etapa = etapa; render();
   const v = $("#video");
   try {
@@ -336,13 +354,37 @@ async function bucle() {
     const cods = await leerCodigos(c);
     const clave = cods.map(x => x.text).sort().join("|") + "#" + cods.length;
     if (clave === sc.clave) sc.veces++; else { sc.clave = clave; sc.veces = 1; sc.desde = Date.now(); }
-    if (!cods.length) { pista(S.etapa === 1 ? "Encuadra la GEO y la LAB juntas" : "Encuadra la LAB de la bolsita y la del sobre"); marco(false); }
-    else if (cods.length === 1) {
+    const p1 = pasoActual() === 1;
+    // lo que se acaba de aceptar sigue en el cuadro (p. ej. la GEO y la LAB del paso 1): no se vuelve a leer hasta que cambie
+    if (sc.bloqueo) {
+      if (clave === sc.bloqueo && cods.length) { marco(false); pista(p1 ? "✓ Listo · sigue con la siguiente muestra" : "✓ Listo · retira la GEO y acerca la LAB de la bolsita", "ok");
+        sc.ocupado = false; if (S.scan?.on) setTimeout(bucle, 110); return; }
+      sc.bloqueo = null;
+    }
+    // paso 2 en dos tiempos: la bolsita de cerca y despues el sobre de cerca (juntas a distancia no se lee el texto LAB)
+    if (sc.primero && (p1 || Date.now() - sc.primero.ts > 25000)) { sc.primero = null; if (!p1) pista("Se reinició: vuelve a leer la bolsita", "wa"); }
+    if (!cods.length) {
       marco(false);
-      pista(S.etapa === 1 ? "Solo se ve una etiqueta: acerca la otra" : "Solo se ve una etiqueta LAB: acerca la bolsita al sobre",
-        Date.now() - sc.desde > 1500 ? "wa" : "");
+      if (sc.primero) { sc.vacios = (sc.vacios || 0) + 1; pista(`Bolsita ${sc.primero.text} ✓ · ahora el sobre`, "ok"); }
+      else pista(p1 ? "Encuadra la GEO y la LAB juntas" : "Acerca la etiqueta LAB de la bolsita");
+    } else if (cods.length === 1) {
+      if (p1) {
+        marco(false);
+        pista("Solo se ve una etiqueta: acerca la otra", Date.now() - sc.desde > 1500 ? "wa" : "");
+      } else if (sc.veces < 3) { marco(true); pista("Leyendo…"); }
+      else if (!sc.primero) {
+        marco(true);
+        const t = await palabra(c, cods[0].pos).catch(() => "?");
+        sc.primero = { text: cods[0].text, t, ts: Date.now() }; sc.vacios = 0;
+        sonar("aviso"); pista(`Bolsita ${cods[0].text} ✓ · ahora el sobre`, "ok");
+      } else if (sc.vacios >= 3) {
+        const t = await palabra(c, cods[0].pos).catch(() => "?");
+        const par = [{ text: sc.primero.text, t: sc.primero.t }, { text: cods[0].text, t }];
+        sc.primero = null;
+        await decidir(par, null, "camara"); sc.bloqueo = clave; sc.clave = ""; sc.veces = 0;
+      } else pista(`Bolsita ${sc.primero.text} ✓ · retírala del cuadro y enfoca el sobre`, Date.now() - sc.primero.ts > 2500 ? "wa" : "ok");
     } else if (cods.length > 2) { marco(false); pista("Hay más de dos etiquetas: deja solo las de esta muestra", "wa"); }
-    else if (sc.veces >= 3) { marco(true); await decidir(cods, c, "camara"); sc.clave = ""; sc.veces = 0; }
+    else if (sc.veces >= 3) { marco(true); sc.primero = null; await decidir(cods, c, "camara"); sc.bloqueo = clave; sc.clave = ""; sc.veces = 0; }
     else { marco(true); pista("Leyendo…"); }
   } catch (e) {
     pista("Error del lector: " + (e.message || e), "wa");
@@ -353,9 +395,9 @@ async function bucle() {
 /* ------------------------------------------------------------------ reglas de cada etapa */
 async function decidir(cods, canvas, metodo, manual = {}) {
   const [a, b] = cods.map(x => x.text);
-  if (S.etapa === 1) return decidirE1(a, b, metodo);
-  let t1 = manual.t1 || "?", t2 = manual.t2 || "?";
-  if (metodo === "camara" && a === b) {
+  if (pasoActual() === 1) return decidirE1(a, b, metodo, canvas, cods);
+  let t1 = manual.t1 || cods[0].t || "?", t2 = manual.t2 || cods[1].t || "?";
+  if (metodo === "camara" && a === b && canvas) {
     pista("Leyendo el texto de las etiquetas…");
     if (!ocr && ocrCargando) { try { await ocrCargando; } catch { /* */ } }
     [t1, t2] = await Promise.all([palabra(canvas, cods[0].pos), palabra(canvas, cods[1].pos)]);
@@ -363,9 +405,25 @@ async function decidir(cods, canvas, metodo, manual = {}) {
   return decidirE2(a, b, t1, t2, metodo);
 }
 
-async function decidirE1(a, b, metodo) {
+async function decidirE1(a, b, metodo, canvas = null, cods = null) {
   const m = S.idx.get(a) || S.idx.get(b);
   const extra = { codigo_1: a, codigo_2: b, metodo };
+  if (S.etapa === "c" && a === b && m && !m.ctrl) {
+    const act = actualC();
+    if (act && act.m.n !== m.n) {
+      const k = await mostrar({ c: "wa", i: "↕", t: "No es la que sigue", n: esc(a), d: [`Se esperaba ${act.m.n} (${act.m.tipo})`, "Revisa el orden de la guía"],
+        b: ["Reintentar", "Validar igual"] });
+      if (k === 0) return;
+    }
+    if (canvas && ocr && cods?.[1]?.pos) {   // dos LAB en el paso 1 = se saltaron la comparacion con la GEO
+      const [w1, w2] = await Promise.all([palabra(canvas, cods[0].pos), palabra(canvas, cods[1].pos)]);
+      if (w1 === "LAB" && w2 === "LAB") {
+        const k = await mostrar({ c: "wa", i: "?", t: "Son dos etiquetas LAB", n: esc(a), d: ["El paso 1 compara la GEO con la LAB", "Encuadra la GEO y la LAB de esta muestra"],
+          b: ["Reintentar", "Son GEO y LAB"] });
+        if (k === 0) return;
+      }
+    }
+  }
   if (a !== b) {
     const k = await mostrar({ c: "mal", i: "✕", t: "Etiquetas NO coinciden", n: `${esc(a)}<br>${esc(b)}`,
       d: ["No retires la GEO. Revisa el sobre"], b: ["Registrar alerta y continuar", "Reintentar"] });
@@ -451,10 +509,10 @@ async function pedirUsuario() {
   if (fd) { S.usuario = String(fd.get("u") || "").trim(); try { localStorage.setItem("usuario", S.usuario); } catch { /* */ } render(); }
 }
 async function ingresoManual() {
-  const e1 = S.etapa === 1;
-  const esp = e1 ? siguienteE1() : siguienteE2();
-  S.scan && (S.scan.on = false);
-  const fd = await dialogo(`<h3>Ingreso manual · etapa ${S.etapa}</h3>
+  const paso = pasoActual(), e1 = paso === 1;
+  const esp = S.etapa === "c" ? actualC()?.m : e1 ? siguienteE1() : siguienteE2();
+  S.scan && (S.scan.on = false, S.scan.primero = null);
+  const fd = await dialogo(`<h3>Ingreso manual · ${S.etapa === "c" ? `paso ${paso}` : `etapa ${S.etapa}`}</h3>
     <label>${e1 ? "Código GEO" : "Etiqueta de la bolsita"}</label><input type="tel" name="a" value="${esc(esp?.n || "")}" inputmode="numeric" required>
     <label>${e1 ? "Código LAB" : "Etiqueta del sobre"}</label><input type="tel" name="b" value="" inputmode="numeric" required>
     ${e1 ? "" : `<div class="chk"><input type="checkbox" name="lab" id="chkLab" checked><label for="chkLab" style="margin:0;text-transform:none;font-size:15px;color:#111827">Las dos etiquetas dicen LAB</label></div>`}
@@ -680,11 +738,21 @@ function pDesp() {
       <div class="et-h">${anillo(p, p === 100 ? "#17633A" : "#012B77")}<div><h4>${tit}</h4><div class="sub">${sub}</div>
         <div class="tags"><span>${n0(hecho)} de ${n0(total)}</span>${al ? `<span class="t-mal">${al} alerta${al === 1 ? "" : "s"}</span>` : ""}</div></div></div>
       ${sig ? `<div class="sig">Siguiente <b class="mono">${esc(sig.n)}</b><span>${esc(sig.tipo)} · ${tramo(sig)}</span></div>` : `<div class="sig ok">${ico("ok", 16)} Etapa completa</div>`}
-      <button class="big ${cls}" data-a="e${e}">${ico("cam", 20)}${hecho ? "Continuar" : "Iniciar"} ${e === 1 ? "etapa 1" : "barrido"}</button></div>`;
+      <button class="big ${cls}" data-a="e${e}">${ico("cam", 20)}Solo ${e === 1 ? "etapa 1" : "etapa 2"}</button></div>`;
+  const a = actualC(), pc = pct(r.e1 + r.e2, r.n1 + r.n);
+  const continua = `<div class="card etapa cont">
+      <div class="et-h">${anillo(pc, pc === 100 ? "#17633A" : "#012B77")}<div><h4>Inserción continua</h4>
+        <div class="sub">En el orden de la guía, muestra por muestra: GEO = LAB y al sobre</div>
+        <div class="tags"><span>${n0(r.e1 + r.e2)} de ${n0(r.n1 + r.n)} pasos</span>${r.alertas.length ? `<span class="t-mal">${r.alertas.length} alerta${r.alertas.length === 1 ? "" : "s"}</span>` : ""}</div></div></div>
+      ${a ? `<div class="sig">Va en <b class="mono">${esc(a.m.n)}</b><span>${a.pos} de ${a.total} · ${a.paso === 1 ? "paso 1 · GEO = LAB" : "paso 2 · al sobre"}</span></div>`
+        : `<div class="sig ok">${ico("ok", 16)} Todas las muestras pasaron</div>`}
+      <button class="big pri" data-a="ec">${ico("cam", 20)}${r.e1 + r.e2 ? "Continuar" : "Iniciar"} inserción</button></div>`;
   return cabDesp(S.desp.despacho) + `<div class="cuerpo con-nav">
     <div class="tipos">${Object.entries(tipos).map(([t, n]) => `<span class="${esControl(t) ? "ctl" : ""}">${esc(t)} · <b>${n0(n)}</b></span>`).join("")}</div>
-    ${etapa(1, "Etapa 1 · GEO = LAB", "Muestras preparadas: la GEO y la LAB juntas", p1, al1, s1, r.e1, r.n1, "pri")}
-    ${etapa(2, "Etapa 2 · Barrido", "La LAB de la bolsita y la del sobre, en el orden de la guía", p2, al2, s2, r.e2, r.n, r.e1 ? "pri" : "lin")}
+    ${continua}
+    <div class="sec">Corregir por etapa</div>
+    ${etapa(1, "Etapa 1 · GEO = LAB", "Muestras con GEO: la GEO y la LAB juntas", p1, al1, s1, r.e1, r.n1, "lin")}
+    ${etapa(2, "Etapa 2 · Al sobre", "La LAB de la bolsita y la del sobre, en el orden de la guía", p2, al2, s2, r.e2, r.n, "lin")}
     <div class="card"><h4>Actividad reciente</h4>${act.length ? `<div class="act">${act.map(l => `<div><span class="pt ${l.resultado === "alerta" ? "mal" : l.metodo === "manual" ? "wa" : "ok"}"></span>
       <span class="mono">${esc(l.muestra)}</span><span class="sub">E${l.etapa} · ${esc(l.resultado === "alerta" ? ALERTA_TXT[l.alerta] || l.alerta : l.metodo === "manual" ? "Manual" : "Conforme")}</span><em>${cuando(l.ts)}</em></div>`).join("")}</div>`
       : '<div class="sub">Sin lecturas todavía</div>'}</div>
@@ -743,12 +811,29 @@ function pResumen() {
     ${falt(f1, 1)}${falt(f2, 2)}
     <button class="big lin" data-a="borrar" style="color:#B42318;margin-bottom:12px">Quitar este despacho del teléfono</button></div>` + nav("resumen");
 }
+function txtArriba() {
+  if (S.etapa !== "c") return `<small>Despacho ${esc(S.desp.despacho)} · Etapa ${S.etapa}</small><b>${S.etapa === 1 ? "GEO = LAB" : "Barrido · bolsita y sobre"}</b>`;
+  const a = actualC();
+  return `<small>Despacho ${esc(S.desp.despacho)} · Inserción continua</small><b>${!a ? "Despacho completo" : a.paso === 1 ? "Paso 1 · GEO = LAB" : "Paso 2 · bolsita y sobre"}</b>`;
+}
+function txtEsperada() {
+  if (S.etapa !== "c") {
+    const m = S.etapa === 1 ? siguienteE1() : siguienteE2();
+    return m ? `Siguiente en la guía<b class="mono">${esc(m.n)}</b>${esc(m.tipo)} · ${tramo(m)}` : "<b>Etapa completa</b>";
+  }
+  const a = actualC();
+  if (!a) return `<b>Todas las muestras pasaron</b>Ve a Resumen para exportar y entregar`;
+  const m = a.m, sig = S.desp.muestras.find(x => x.o > m.o);
+  const paso = e => `<span class="${tocado(e, m.n) ? "ok" : e === a.paso ? "on" : ""}">${e === 1 ? "1 · GEO = LAB" : "2 · Al sobre"}</span>`;
+  return `${a.pos} de ${a.total}<b class="mono">${esc(m.n)}</b>${esc(m.tipo)} · ${tramo(m)}
+    <div class="pasos">${pasosDe(m).map(paso).join("")}</div>${sig ? `<small class="desp">Después: ${esc(sig.n)} · ${esc(sig.tipo)}</small>` : ""}`;
+}
 function pCamara() {
-  const e1 = S.etapa === 1, m = e1 ? siguienteE1() : siguienteE2();
+  const e1 = pasoActual() === 1;
   return `<div class="cam"><video id="video" playsinline muted></video><div class="marco" id="marco"></div>
-    <div class="arriba"><small>Despacho ${esc(S.desp.despacho)} · Etapa ${S.etapa}</small><b>${e1 ? "GEO = LAB" : "Barrido · bolsita y sobre"}</b>
-      <div class="tip" id="tip">${e1 ? "Encuadra la GEO y la LAB juntas" : "Encuadra la LAB de la bolsita y la del sobre"}</div></div>
-    <div class="abajo"><div class="esperada">${m ? `Siguiente en la guía<b class="mono">${esc(m.n)}</b>${esc(m.tipo)} · ${tramo(m)}` : "<b>Etapa completa</b>"}</div>
+    <div class="arriba"><div id="cab">${txtArriba()}</div>
+      <div class="tip" id="tip">${e1 ? "Encuadra la GEO y la LAB juntas" : "Acerca la etiqueta LAB de la bolsita"}</div></div>
+    <div class="abajo"><div class="esperada">${txtEsperada()}</div>
       <div class="botones"><button data-a="cerrar">Pausar</button><button data-a="manual">Ingreso manual</button><button class="icono" data-a="luz" title="Linterna">💡</button></div></div></div>`;
 }
 async function render() {
@@ -756,8 +841,10 @@ async function render() {
   if (S.pant === "qr") { if (!$("#video")) app.innerHTML = pQr(); return; }
   if (S.pant === "camara") {
     if (!$("#video")) app.innerHTML = pCamara();
-    else { const e = document.querySelector(".esperada"); const m = S.etapa === 1 ? siguienteE1() : siguienteE2();
-      if (e) e.innerHTML = m ? `Siguiente en la guía<b class="mono">${esc(m.n)}</b>${esc(m.tipo)} · ${tramo(m)}` : "<b>Etapa completa</b>"; }
+    else {
+      const e = document.querySelector(".esperada"); if (e) e.innerHTML = txtEsperada();
+      const c = $("#cab"); if (c) c.innerHTML = txtArriba();
+    }
     return;
   }
   if (!S.desp && S.pant !== "inicio") S.pant = "inicio";
@@ -781,6 +868,7 @@ document.addEventListener("click", async e => {
   else if (a === "desp" || a === "muestras" || a === "resumen") ir(a);
   else if (a === "filtro") { S.filtro = b.dataset.f; render(); }
   else if (a === "muestra") verMuestra(b.dataset.n);
+  else if (a === "ec") abrirCamara("c");
   else if (a === "e1") abrirCamara(1);
   else if (a === "e2") abrirCamara(2);
   else if (a === "cerrar") cerrarCamara();

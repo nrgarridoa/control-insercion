@@ -7,11 +7,15 @@ señal una vez abierta.
 ## Cómo se usa
 1. En la plataforma (QAQC › Drillholes › Control de Inserción) se carga la guía en PDF y se comparte el
    **enlace del despacho**. Al abrirlo en el celular, la app carga el despacho completo y lo guarda.
-2. **Etapa 1 · GEO = LAB:** se encuadran juntas la etiqueta GEO y la LAB de cada muestra preparada. Los
-   controles MB/MC no pasan por esta etapa.
-3. **Etapa 2 · Barrido:** en el orden de la guía, se encuadran juntas la LAB de la bolsita y la del sobre.
-   Deben tener el mismo número y las dos deben decir LAB: las GEO no se envían al laboratorio.
-4. **Exportar CSV** y subirlo a la plataforma (Importar validación).
+2. **Inserción continua** (como se trabaja en el laboratorio): se recorre la guía en orden, muestra por muestra.
+   - **Paso 1 · GEO = LAB** (las que tienen GEO: ASSAY y duplicados MD/MDT/MDG/MDF; los controles MB/MC no):
+     la GEO y la LAB juntas en el cuadro. Si se leen dos LAB, avisa que falta comparar la GEO.
+   - **Paso 2 · al sobre:** en dos tiempos, primero la LAB de la bolsita de cerca y luego la del sobre de cerca
+     (juntas a distancia no se alcanza a leer el texto LAB). Deben tener el mismo número y decir LAB.
+   - Al quedar conforme avanza sola a la siguiente posición; lo recién leído no se vuelve a leer hasta que cambie
+     lo que ve la cámara.
+3. **Corregir por etapa:** las etapas 1 y 2 por separado, para repasar alertas o una muestra suelta.
+4. **Exportar y entregar** el archivo cifrado y subirlo a la plataforma (Importar validación).
 
 Cada lectura queda guardada en el teléfono al instante (IndexedDB) y tiene un identificador único, así que
 reimportar el mismo archivo no duplica nada.
