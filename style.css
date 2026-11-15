@@ -140,3 +140,8 @@ dialog input.clave-in::placeholder{color:#D1D5DB}
 .ecard .ib{border:0;background:none;color:#9CA3AF;padding:6px;border-radius:8px}
 .dcard em.borra{color:var(--mal);font-weight:700}
 .aviso-borrar{background:#FFF4D6;color:#6B4600;border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.45;margin:14px 0 0}
+
+.dwrap{display:flex;gap:8px;align-items:stretch;margin-bottom:10px}.dwrap .dcard{margin-bottom:0;flex:1;min-width:0}
+.dquita{border:0;background:#fff;color:#B42318;border-radius:16px;width:48px;flex:none;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 2px rgba(15,23,42,.06)}
+.dquita:active{background:#FDECEC}
+.big.pri.peligro{background:#B42318;border-color:#B42318}

@@ -6,7 +6,7 @@
  * El despacho llega en un enlace #g= que genera la plataforma (ver backend ddh_insercion/guia.py).
  */
 "use strict";
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const n0 = v => (v ?? 0).toLocaleString("es-PE");
@@ -523,6 +523,23 @@ async function entregar() {
   toast(`Despacho ${d.despacho} entregado y borrado del teléfono`, 4000);
   ir("inicio");
 }
+/* quitar un despacho del telefono (pruebas, o uno que ya no se va a trabajar): borra sus lecturas y el despacho */
+async function quitarDespacho(id) {
+  const d = (await idb.all("despachos")).find(x => x.despacho === id);
+  if (!d) return false;
+  const r = await resumenDe(d);
+  const aviso = r.sinExp ? `<p class="aviso-borrar">Tiene <b>${n0(r.sinExp)} lectura${r.sinExp === 1 ? "" : "s"} sin exportar</b>: se pierden.</p>` : "";
+  const ok = await dialogo(`<h3>Eliminar ${esc(id)}</h3><p>${esc(d.sondaje || "")} · E1 ${n0(r.e1)}/${n0(r.n1)} · E2 ${n0(r.e2)}/${n0(r.n)}</p>${aviso}
+    <p>Se borra de este teléfono con todas sus lecturas. Para volver a trabajarlo, se abre otra vez el enlace de la plataforma.</p>
+    <div class="fila" style="margin-top:16px"><button class="big lin" value="no" formnovalidate>Cancelar</button><button class="big pri peligro" value="ok">Eliminar</button></div>`);
+  if (!ok) return false;
+  for (const l of await idb.porDespacho(id)) await idb.del("lecturas", l.uuid);
+  await idb.del("despachos", id);
+  if (S.desp?.despacho === id) { S.desp = null; S.lect = []; try { localStorage.removeItem("despacho"); } catch { /* */ } }
+  toast(`Despacho ${id} eliminado del teléfono`);
+  return true;
+}
+
 /* despachos sin actividad: se borran 3 dias despues de vencido el enlace (o de la ultima lectura, lo que sea despues) */
 const H = 3600000, DIAS_INACTIVO = 3;
 function limiteBorrado(d, ultimaTs) {
@@ -581,7 +598,7 @@ const IC = {
   buscar: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
   der: '<path d="m9 18 6-6-6-6"/>', atras: '<path d="m15 18-6-6 6-6"/>',
   alerta: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
-  ok: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', reloj: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  ok: '<path d="M20 6 9 17l-5-5"/>', basura: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>', x: '<path d="M18 6 6 18M6 6l12 12"/>', reloj: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   subir: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
 };
 const ico = (k, s = 20) => `<svg class="ico" width="${s}" height="${s}" viewBox="0 0 24 24">${IC[k]}</svg>`;
@@ -631,14 +648,15 @@ async function pHome() {
   const fecha = t => new Date(t).toLocaleString("es-PE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
   const tarjeta = ({ d, r }) => {
     const p = pct(r.e1 + r.e2, r.n1 + r.n), fin = r.e1 >= r.n1 && r.e2 >= r.n;
-    return `<button class="dcard" data-a="abrir" data-d="${esc(d.despacho)}">
+    return `<div class="dwrap"><button class="dcard" data-a="abrir" data-d="${esc(d.despacho)}">
       ${anillo(p, fin ? "#17633A" : "#012B77")}
       <div class="dt"><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · ${n0(r.n)} muestras</small>
         <div class="tags"><span>E1 ${n0(r.e1)}/${n0(r.n1)}</span><span>E2 ${n0(r.e2)}/${n0(r.n)}</span>
           ${r.alertas ? `<span class="t-mal">${n0(r.alertas)} alerta${r.alertas === 1 ? "" : "s"}</span>` : ""}${r.sinExp ? `<span class="t-wa">${n0(r.sinExp)} sin exportar</span>` : ""}
           ${fin && !r.sinExp ? `<span class="t-ok">Completo</span>` : ""}</div>
         <em>${r.ultima ? "Última lectura " + cuando(r.ultima) : "Cargado " + cuando(d.cargado)}</em>
-        ${r.borra - Date.now() < 24 * H ? `<em class="borra">Se borra el ${fecha(r.borra)} si no hay actividad</em>` : ""}</div>${ico("der")}</button>`;
+        ${r.borra - Date.now() < 24 * H ? `<em class="borra">Se borra el ${fecha(r.borra)} si no hay actividad</em>` : ""}</div>${ico("der")}</button>
+      <button class="dquita" data-a="quitar" data-d="${esc(d.despacho)}" aria-label="Eliminar ${esc(d.despacho)}">${ico("basura", 19)}</button></div>`;
   };
   const constancia = d => `<div class="ecard">${ico("ok", 18)}<div><b>${esc(d.despacho)}</b><small>${esc(d.sondaje || "")} · E1 ${n0(d.e1)}/${n0(d.n1)} · E2 ${n0(d.e2)}/${n0(d.n)}${d.alertas ? ` · ${n0(d.alertas)} alerta${d.alertas === 1 ? "" : "s"}` : ""}</small>
       <em>Entregado ${fecha(d.entregado)} · borrado del teléfono</em></div><button class="ib" data-a="quitarc" data-d="${esc(d.despacho)}" aria-label="Quitar">${ico("x", 16)}</button></div>`;
@@ -771,14 +789,8 @@ document.addEventListener("click", async e => {
   else if (a === "exportar") exportar();
   else if (a === "usuario") pedirUsuario();
   else if (a === "quitarc") { await idb.del("despachos", b.dataset.d); render(); }
-  else if (a === "borrar") {
-    const r = resumen();
-    if (!confirm(`¿Quitar el despacho ${S.desp.despacho} del teléfono?${r.sinExp ? ` Hay ${r.sinExp} lecturas sin exportar.` : ""}`)) return;
-    for (const l of S.lect) await idb.del("lecturas", l.uuid);
-    await idb.del("despachos", S.desp.despacho);
-    try { localStorage.removeItem("despacho"); } catch { /* */ }
-    S.desp = null; S.lect = []; ir("inicio");
-  }
+  else if (a === "borrar") { if (await quitarDespacho(S.desp.despacho)) ir("inicio"); }
+  else if (a === "quitar") { if (await quitarDespacho(b.dataset.d)) render(); }
 });
 
 /* ------------------------------------------------------------------ inicio */
